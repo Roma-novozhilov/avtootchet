@@ -12,8 +12,11 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"            # русский текст в выводе; без этого Python на Windows падает
+      PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Описание версии из тега
         shell: bash
@@ -22,7 +25,7 @@ jobs:
           git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > notes.txt
           cat notes.txt
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
