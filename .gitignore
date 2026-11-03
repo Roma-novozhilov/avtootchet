@@ -1,0 +1,9 @@
+.venv/
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+notes.txt
+avtootchet_update_key.txt
+*.key
