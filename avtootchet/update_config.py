@@ -4,5 +4,5 @@ REPO        - репозиторий GitHub, в Releases которого леж
 PUBLIC_KEY  - открытый ключ подписи обновлений. Его записывает tools/make_update_key.py.
               Пока ключа нет, обновление выключено: программа не поставит файл без подписи.
 """
-REPO = "roma-novozhilov/avtootchet"
+REPO = "Roma-novozhilov/avtootchet"
 PUBLIC_KEY = "422f9017b57326c678543325605f9471b6b9e0f43e888d26ced8b0a8f14f06ef"
