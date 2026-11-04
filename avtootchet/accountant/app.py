@@ -161,7 +161,7 @@ class AccountantWindow(QMainWindow):
         self.setCentralWidget(root)
         self._cleanup_temp()
         self._update()
-        self.updates.start()
+        # обновления проверяются только по кнопке «Обновления»
 
     def _cleanup_temp(self):
         """Копии, оставшиеся после аварийного закрытия программы."""

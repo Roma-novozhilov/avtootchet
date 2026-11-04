@@ -99,7 +99,7 @@ class OwnerWindow(QMainWindow):
         self.drive_timer = QTimer(self)
         self.drive_timer.timeout.connect(self.refresh_drives)
         self.drive_timer.start(5000)
-        self.updates.start()
+        # обновления проверяются только по кнопке «Обновления»
 
     # ============================================================ интерфейс
     def _build_ui(self):
