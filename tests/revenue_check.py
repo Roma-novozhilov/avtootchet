@@ -99,9 +99,10 @@ class Conn:
     rko = [{"День": D2, "Касса": "Эквайринг СЕРВИС", "Сумма": 400.0}]
 
     def exp(num, acc, src, cp, art, mov, div, basis, amount, op="Расход денег"):
+        org = "СЕРВИС (БЧ)" if "БЧ" in acc else "ИП Новожилов А.В."
         return {"Дата": D2, "Номер": num, "Счет": acc, "Источник": src, "ВидОперации": op,
                 "Контрагент": cp, "Статья": art, "ВидДвижения": mov, "Подразделение": div,
-                "Организация": "ИП", "Основание": basis, "Сумма": amount, "Комментарий": "",
+                "Организация": org, "Основание": basis, "Сумма": amount, "Комментарий": "",
                 "Назначение": ""}
     expenses = [
         exp("Р1", "АО \"АЛЬФА БАНК\"", "Банк", "БЕРГ ХОЛДИНГ ООО", "", "Оплата поставщикам", "Сервис",
@@ -168,11 +169,26 @@ assert wb.sheetnames[:9] == ["Выручка по дням", "Итоги", "Св
 assert "Не сходится: 1 из" in wb["Сверка"]["A3"].value
 for name in ("Расходы по статьям", "Расходы по поставщикам", "Расходы подробно"):
     assert name in wb.sheetnames, name
-art = {r[0]: r for r in wb["Расходы по статьям"].iter_rows(min_row=5, values_only=True) if r[0]}
+titles = [r[0] for r in wb["Расходы по статьям"].iter_rows(min_row=4, values_only=True)
+          if r[0] and r[1] is None and str(r[0]) not in ("Итого",)]
+assert titles == ["ИП Новожилов А.В.", "СЕРВИС (БЧ)", "Всего по всем организациям"], titles
+blocks, cur = {}, None
+for r in wb["Расходы по статьям"].iter_rows(min_row=4, values_only=True):
+    if r[0] in titles:
+        cur = r[0]
+        blocks[cur] = {}
+    elif cur and r[0]:
+        blocks[cur][r[0]] = r
+assert blocks["ИП Новожилов А.В."]["Итого"][8] == 62400, blocks["ИП Новожилов А.В."]["Итого"]
+assert blocks["СЕРВИС (БЧ)"]["Итого"][8] == 5150
+assert "Уборка помещений" not in blocks["ИП Новожилов А.В."]
+art = blocks["Всего по всем организациям"]
 assert art["Оплата поставщикам"][4] == 62000 and art["Оплата поставщикам"][8] == 62000
 assert art["Уборка помещений"][2] == 2 and art["Уборка помещений"][3] == 5000
 assert art["Итого"][8] == 67550, art["Итого"]
 sup = [r for r in wb["Расходы по поставщикам"].iter_rows(values_only=True) if r[0] in ("Берг", "Вюрт", "Амтек")]
+assert len(sup) == 9, "блок основных поставщиков - в каждой организации и в общем итоге"
+sup = sup[-3:]
 assert [(r[0], r[5]) for r in sup] == [("Берг", 50000), ("Вюрт", 12000), ("Амтек", 0)], sup
 assert sup[2][1] == "не найден за период"
 assert "Прочие поступления" in wb.sheetnames and "Замечания" in wb.sheetnames

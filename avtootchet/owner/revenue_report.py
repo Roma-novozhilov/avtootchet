@@ -272,50 +272,72 @@ def _dir(e: Expense) -> str:
     return METAL if "металл" in d else (SERVICE if "сервис" in d else "не указано")
 
 
-def _sheet_expense_articles(wb: Workbook, data: RevenueData):
-    ws = wb.create_sheet("Расходы по статьям")
-    ws["A1"] = f"Расходы по статьям {data.d1:%d.%m.%Y}–{data.d2:%d.%m.%Y}"
-    ws["A1"].font = F_TITLE
-    ws["A2"] = ("Все документы «Расход денег» (кассы и расчётные счета). Группа — статья затрат; "
-                "если статьи нет — вид движения денежных средств. Перемещения между кассами и "
-                "счетами сюда не входят (лист «Перемещения ДС»).")
-    ws["A2"].font = F_SUB
+def _orgs(exps: list[Expense]) -> list[str]:
+    """Организации по порядку: сначала «белые» (ИП), затем «БЧ», затем без организации."""
+    names = {e.organization or "Организация не указана" for e in exps}
+    return sorted(names, key=lambda n: ("не указана" in n, "бч" in n.lower(), n))
+
+
+def _by_org(exps: list[Expense]) -> list[tuple[str, list[Expense]]]:
+    out = [(o, [e for e in exps if (e.organization or "Организация не указана") == o]) for o in _orgs(exps)]
+    if len(out) > 1:
+        out.append(("Всего по всем организациям", exps))
+    return out
+
+
+def _articles_table(ws: Worksheet, row: int, title: str, exps: list[Expense]) -> int:
+    ws.cell(row, 1, title).font = F_DAY
     groups: dict[str, dict] = {}
-    for e in data.expenses:
+    for e in exps:
         g = groups.setdefault(e.group, {"kind": e.group_kind, "n": 0, "Касса": 0.0, "Банк": 0.0,
                                         SERVICE: 0.0, METAL: 0.0, "не указано": 0.0})
         g["n"] += 1
         g["Банк" if e.source == "Банк" else "Касса"] += e.amount
         g[_dir(e)] += e.amount
-    total = sum(e.amount for e in data.expenses) or 1.0
+    total = sum(e.amount for e in exps) or 1.0
     rows = []
     for name, g in sorted(groups.items(), key=lambda kv: -(kv[1]["Касса"] + kv[1]["Банк"])):
         all_ = g["Касса"] + g["Банк"]
         rows.append([name, g["kind"], g["n"], round(g["Касса"], 2), round(g["Банк"], 2),
                      round(g[SERVICE], 2), round(g[METAL], 2), round(g["не указано"], 2), round(all_, 2),
                      f"{all_ / total:.1%}".replace(".", ",")])
-    end = _table(ws, 4, ["Статья / вид движения", "Что это", "Документов", "Из касс", "С расч. счетов",
-                         "Сервис", "Металлообработка", "Подразделение не указано", "Всего", "Доля"],
+    first = row + 2
+    end = _table(ws, row + 1, ["Статья / вид движения", "Что это", "Документов", "Из касс",
+                               "С расч. счетов", "Сервис", "Металлообработка",
+                               "Подразделение не указано", "Всего", "Доля"],
                  rows, money_from=4, widths=[40, 15, 11, 15, 15, 15, 15, 15, 15, 8], total=True)
-    for r in range(5, 5 + len(rows)):
+    for r in range(first, first + len(rows)):
         if ws.cell(r, 1).value == REFUND_GROUP:
             for c in range(1, 11):
                 ws.cell(r, c).fill = FILL_WARN
-    ws.cell(end, 1, "Возврат покупателю — деньги, вернувшиеся клиентам по заказ-нарядам и накладным "
-                    "(в выручке они уже стоят минусом).").font = F_SUB
-    ws.freeze_panes = "B5"
+    return end + 1
 
 
-def _sheet_expense_suppliers(wb: Workbook, data: RevenueData):
-    ws = wb.create_sheet("Расходы по поставщикам")
-    ws["A1"] = f"Расходы по контрагентам {data.d1:%d.%m.%Y}–{data.d2:%d.%m.%Y}"
+def _sheet_expense_articles(wb: Workbook, data: RevenueData):
+    ws = wb.create_sheet("Расходы по статьям")
+    ws["A1"] = f"Расходы по статьям {data.d1:%d.%m.%Y}–{data.d2:%d.%m.%Y}"
     ws["A1"].font = F_TITLE
-    exp = [e for e in data.expenses if e.group != REFUND_GROUP]
-    row = 3
-    if data.main_suppliers:
+    ws["A2"] = ("Все документы «Расход денег» (кассы и расчётные счета), отдельно по каждой организации. "
+                "Группа — статья затрат; если статьи нет — вид движения денежных средств. Перемещения "
+                "между кассами и счетами сюда не входят (лист «Перемещения ДС»). Возврат покупателю — "
+                "деньги, вернувшиеся клиентам (в выручке они уже стоят минусом).")
+    ws["A2"].font = F_SUB
+    row = 4
+    for org, exps in _by_org(data.expenses):
+        row = _articles_table(ws, row, org, exps)
+    if not data.expenses:
+        ws.cell(row, 1, "За период нет расходов.").font = FB
+
+
+def _suppliers_tables(ws: Worksheet, row: int, title: str, exps: list[Expense],
+                      main_suppliers: list[str]) -> int:
+    ws.cell(row, 1, title).font = F_DAY
+    row += 1
+    exp = [e for e in exps if e.group != REFUND_GROUP]
+    if main_suppliers:
         ws.cell(row, 1, "Основные поставщики").font = FB
         rows = []
-        for sup in data.main_suppliers:
+        for sup in main_suppliers:
             items = [e for e in exp if supplier_matches(e.counterparty, sup)]
             names = sorted({e.counterparty for e in items})
             rows.append([sup, "; ".join(names) if names else "не найден за период", len(items),
@@ -340,8 +362,20 @@ def _sheet_expense_suppliers(wb: Workbook, data: RevenueData):
         main_group = max(c["groups"].items(), key=lambda kv: kv[1])[0]
         rows.append([name, main_group, c["n"], round(c["Касса"], 2), round(c["Банк"], 2), round(all_, 2),
                      f"{all_ / total:.1%}".replace(".", ",")])
-    _table(ws, row + 1, ["Контрагент", "Основная статья / вид движения", "Документов", "Из касс",
-                         "С расч. счетов", "Всего", "Доля"], rows, money_from=4, total=True)
+    end = _table(ws, row + 1, ["Контрагент", "Основная статья / вид движения", "Документов", "Из касс",
+                               "С расч. счетов", "Всего", "Доля"], rows, money_from=4, total=True)
+    return end + 1
+
+
+def _sheet_expense_suppliers(wb: Workbook, data: RevenueData):
+    ws = wb.create_sheet("Расходы по поставщикам")
+    ws["A1"] = f"Расходы по контрагентам {data.d1:%d.%m.%Y}–{data.d2:%d.%m.%Y}"
+    ws["A1"].font = F_TITLE
+    ws["A2"] = "Отдельно по каждой организации; возвраты покупателям сюда не входят."
+    ws["A2"].font = F_SUB
+    row = 4
+    for org, exps in _by_org(data.expenses):
+        row = _suppliers_tables(ws, row, org, exps, data.main_suppliers)
     ws.column_dimensions["G"].width = 8
 
 
