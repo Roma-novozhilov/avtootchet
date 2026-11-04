@@ -23,7 +23,7 @@ from ..common.models import CashBook, OneCData
 from ..common.paths import resource
 from ..common.settings import Settings
 from ..common.transfer import DEFAULT_PORT, DiscoveryResponder, Receiver, local_ips
-from ..common import updater
+from ..common import preview, updater
 from ..common.update_ui import UpdateController
 from ..common.ui import STYLE, StatusDot, error_box, money, run_in_background
 from .cashbook_parser import BookParseError, parse_cashbook
@@ -81,6 +81,7 @@ class OwnerWindow(QMainWindow):
             self.settings["secret"] = new_secret()
             self.settings.save()
         self.journal = Journal("owner")
+        preview.cleanup()          # копии отчёта, оставшиеся с прошлого раза
         self.session = Session()
         self.receiver: Receiver | None = None
         self.discovery: DiscoveryResponder | None = None
@@ -492,8 +493,13 @@ class OwnerWindow(QMainWindow):
                 "по данным 1С и список всех расхождений.\n\nСгрузить на флешку?")
             if ans != QMessageBox.Yes:
                 return
+        name = report_filename(s.result)
+        self._log("Отчёт открыт для проверки")
+        if not preview.confirm_with_preview(self, bytes(s.report), name, "сгрузить на флешку"):
+            self._log("Отправка отменена владельцем")
+            return
         try:
-            target = write_to_drive(root, report_filename(s.result), bytes(s.report))
+            target = write_to_drive(root, name, bytes(s.report))
         except OSError as e:
             error_box(self, "Флешка", f"Не удалось записать отчёт: {e}")
             return
@@ -527,6 +533,8 @@ class OwnerWindow(QMainWindow):
             self.receiver.stop()
         if self.discovery:
             self.discovery.stop()
+        if preview.cleanup():
+            self.journal.write("Копия отчёта ещё открыта в Excel", "будет стёрта при следующем запуске")
         self.journal.write("Программа закрыта" + (", данные удалены из памяти" if had else ""))
         super().closeEvent(event)
 

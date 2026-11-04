@@ -15,6 +15,7 @@ os.environ["APPDATA"] = str(work / "appdata")
 usb = work / "usb"
 usb.mkdir()
 os.environ["AVTO_FAKE_USB"] = str(usb)
+os.environ["AVTO_NO_OPEN"] = "1"
 shots = Path(sys.argv[1]) if len(sys.argv) > 1 else work
 
 from PySide6.QtCore import QDate  # noqa: E402
@@ -108,7 +109,25 @@ owner.grab().save(str(shots / "3_owner_checked.png"))
 owner.refresh_drives()
 pump(0.2)
 assert owner.btn_usb.isEnabled(), "кнопка флешки должна быть активна"
+from avtootchet.common import preview  # noqa: E402
+seen = {}
+
+
+def fake_ask(parent, pf, action):
+    seen["file"] = pf.path
+    assert pf.path.read_bytes() == bytes(owner.session.report), "в Excel должен открыться тот же отчёт"
+    return seen["answer"]
+
+
+preview._ask = fake_ask
+seen["answer"] = False                      # «Не отправлять»
 owner.export_usb()
+assert not list(usb.glob("*.xlsx")), "после «Не отправлять» на флешке ничего не должно быть"
+assert not seen["file"].exists(), "временная копия должна стереться"
+seen["answer"] = True                       # «Отправить»
+owner.export_usb()
+assert not seen["file"].exists(), "временная копия должна стереться"
+assert not list(temp_dir().glob("preview_*")), "папки предпросмотра должны быть удалены"
 files = list(usb.glob("*.xlsx"))
 print("на флешке ->", [f.name for f in files])
 assert len(files) == 1
