@@ -9,6 +9,7 @@
    «Сверка» - по каждой кассе за каждый день: приход и расход по регистру денег Далиона
    против оплат отчёта, прочих поступлений, РКО и перемещений; расхождение = что-то не учтено.
 3. «Оплаты подробно» - каждая оплата со всеми полями.
+   «Прибыль», «Динамика», «Эквайринг и СБП», «Долги клиентов», «Механики» - см. analytics.py.
 4. «Расходы по статьям», «Расходы по поставщикам», «Расходы подробно» - все документы
    «Расход денег» (кассы и расчётные счета): по статье затрат, а где статьи нет - по виду
    движения денежных средств; возвраты покупателям - отдельной строкой.
@@ -446,6 +447,18 @@ def _sheet_balances(wb: Workbook, data: RevenueData):
            money_from=3, widths=[11, 26, 15, 15, 15, 15])
 
 
+SHEET_ORDER = ["Выручка по дням", "Итоги", "Прибыль", "Динамика", "Сверка", "Эквайринг и СБП",
+               "Оплаты подробно", "Расходы по статьям", "Расходы по поставщикам", "Расходы подробно",
+               "Долги клиентов", "Механики", "Перемещения ДС", "Остатки касс", "Прочие поступления",
+               "Замечания"]
+
+
+def _reorder(wb: Workbook, order: list[str]) -> None:
+    rank = {n: i for i, n in enumerate(order)}
+    wb._sheets.sort(key=lambda ws: rank.get(ws.title, len(order)))
+    wb.active = 0
+
+
 def build_revenue_report(data: RevenueData) -> bytes:
     wb = Workbook()
     _sheet_days(wb, data)
@@ -462,6 +475,9 @@ def build_revenue_report(data: RevenueData) -> bytes:
                       "Поступления без заказ-наряда и накладной (не выручка)", data.other)
     if data.notes:
         _sheet_detail(wb, "Замечания", "Оплаты, на которые стоит посмотреть", data.notes, total=False)
+    from .analytics_report import add_analytics_sheets  # noqa: PLC0415 - модуль использует этот
+    add_analytics_sheets(wb, data)
+    _reorder(wb, SHEET_ORDER)
     for ws in wb.worksheets:
         ws.sheet_view.zoomScale = 90
         ws.page_setup.orientation = "landscape"

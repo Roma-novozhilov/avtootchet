@@ -89,6 +89,7 @@ class RevenueData:
     rko_totals: dict = field(default_factory=dict)   # (день, касса) -> сумма всех РКО
     expenses: list["Expense"] = field(default_factory=list)
     main_suppliers: list[str] = field(default_factory=list)
+    analytics: object = None          # analytics.Analytics
     loaded_at: datetime = field(default_factory=datetime.now)
 
     @property
@@ -564,4 +565,9 @@ def load_revenue(conn, d1: date, d2: date, oil_groups: list[str] | None = None,
                         _str(r["Основание"]), _num(r["Сумма"]), _str(r["Комментарий"]),
                         _str(r["Назначение"]))
                 for r in run(Q_EXPENSES, exp_cols)]
-    return RevenueData(d1, d2, payments, transfers, balances, rko, expenses, list(main_suppliers or []))
+    from .analytics import load_analytics  # noqa: PLC0415
+    analytics = load_analytics(conn, d1, d2, payments, transfers, run)
+    expenses += analytics.commissions          # комиссия банка за эквайринг/СБП - тоже расход
+    expenses.sort(key=lambda e: e.dt)
+    return RevenueData(d1, d2, payments, transfers, balances, rko, expenses, list(main_suppliers or []),
+                       analytics)
