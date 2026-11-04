@@ -11,7 +11,7 @@ if not exist ".venv\Scripts\python.exe" (
 echo.
 echo === Сборка программы владельца ===
 ".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onefile --windowed ^
-    --name AvtoOtchet-Vladelec --add-data "demo\export.json;demo" owner_main.py || goto :error
+    --name AvtoOtchet-Vladelec --hidden-import win32timezone --add-data "demo\export.json;demo" owner_main.py || goto :error
 
 echo.
 echo === Сборка программы бухгалтера ===

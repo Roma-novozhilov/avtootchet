@@ -69,7 +69,7 @@ jobs:
       - name: Сборка
         if: steps.ver.outputs.skip != 'true'
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name AvtoOtchet-Vladelec --add-data "demo\export.json;demo" owner_main.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name AvtoOtchet-Vladelec --hidden-import win32timezone --add-data "demo\export.json;demo" owner_main.py
           pyinstaller --noconfirm --clean --onefile --windowed --name AvtoOtchet-Buhgalter accountant_main.py
 
       - name: Подпись
