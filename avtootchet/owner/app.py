@@ -461,7 +461,10 @@ class OwnerWindow(QMainWindow):
             self.session.revenue, self.session.revenue_report = data, bytearray(xlsx)
             rev = data.revenue
             warn = f" · замечаний: {len(data.notes)}" if data.notes else ""
-            self.dot_rev.set("yellow" if data.notes else "green")
+            recon = data.reconciliation
+            bad = sum(1 for r in recon if not r.ok)
+            warn += f" · сверка с 1С: НЕ СХОДИТСЯ ({bad})" if bad else " · сверка с 1С: сходится"
+            self.dot_rev.set("red" if bad else ("yellow" if data.notes else "green"))
             self.lbl_rev.setText(f"Выручка {d1:%d.%m.%Y}–{d2:%d.%m.%Y}: оплат {len(rev)}, "
                                  f"{money(sum(p.amount for p in rev))}{warn}")
             self._log("Построен отчёт по выручке",
