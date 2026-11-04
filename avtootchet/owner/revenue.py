@@ -20,6 +20,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from ..common.comdate import com_datetime, inline_dates
+
 SERVICE, METAL = "Сервис", "Металлообработка"
 TERMINAL, QR, CASH, CASH_NC = "Терминал", "QR код", "Наличные (чек)", "Наличные (без чека)"
 METHODS = (TERMINAL, QR, CASH, CASH_NC)
@@ -485,8 +487,7 @@ Q_BALANCES = """ВЫБРАТЬ
 
 
 def _dt(v) -> datetime:
-    return datetime(v.year, v.month, v.day, getattr(v, "hour", 0), getattr(v, "minute", 0),
-                    getattr(v, "second", 0))
+    return com_datetime(v)
 
 
 def _str(v) -> str:
@@ -508,10 +509,8 @@ def load_revenue(conn, d1: date, d2: date, oil_groups: list[str] | None = None,
 
     def run(text: str, cols: tuple[str, ...], **extra):
         q = conn.NewObject("Запрос")
-        q.Text = text
-        q.SetParameter("Начало", start)
-        q.SetParameter("Конец", end)
-        for k, v in extra.items():
+        q.Text, rest = inline_dates(text, {"Начало": start, "Конец": end, **extra})
+        for k, v in rest.items():
             q.SetParameter(k, v)
         sel = q.Execute().Choose()
         rows = []
