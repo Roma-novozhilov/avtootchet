@@ -64,7 +64,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           AVTO_NO_OPEN: "1"
-        run: python tests/updater_check.py && python tests/e2e_check.py
+        run: python tests/updater_check.py && python tests/probe_check.py && python tests/e2e_check.py
 
       - name: Сборка
         if: steps.ver.outputs.skip != 'true'
