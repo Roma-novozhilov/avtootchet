@@ -57,6 +57,8 @@ class Query:
             rows = self.conn.payments
         elif "КонвертацияДС" in self.Text:
             rows = self.conn.transfers
+        elif "Р.НазначениеПлатежа" in self.Text:
+            rows = self.conn.expenses
         elif "НАЧАЛОПЕРИОДА(Р.Дата, ДЕНЬ)" in self.Text:
             rows = self.conn.rko
         elif "ОстаткиИОбороты" in self.Text:
@@ -96,6 +98,24 @@ class Conn:
                   "Списано": 34720.0, "Зачислено": 34720.0, "Комментарий": ""}]
     rko = [{"День": D2, "Касса": "Эквайринг СЕРВИС", "Сумма": 400.0}]
 
+    def exp(num, acc, src, cp, art, mov, div, basis, amount, op="Расход денег"):
+        return {"Дата": D2, "Номер": num, "Счет": acc, "Источник": src, "ВидОперации": op,
+                "Контрагент": cp, "Статья": art, "ВидДвижения": mov, "Подразделение": div,
+                "Организация": "ИП", "Основание": basis, "Сумма": amount, "Комментарий": "",
+                "Назначение": ""}
+    expenses = [
+        exp("Р1", "АО \"АЛЬФА БАНК\"", "Банк", "БЕРГ ХОЛДИНГ ООО", "", "Оплата поставщикам", "Сервис",
+            "Приходная накладная", 50000.0),
+        exp("Р2", "АО \"АЛЬФА БАНК\"", "Банк", "ООО \"Вюрт-Русь\"", "", "Оплата поставщикам", "Сервис",
+            "Приходная накладная", 12000.0),
+        exp("Р3", "Наличные БЧ СЕРВИС", "Касса", "Клининг ИП", "Уборка помещений", "", "Сервис", "",
+            3000.0, op="Списание на затраты"),
+        exp("Р4", "Наличные БЧ СЕРВИС", "Касса", "Клининг ИП", "Уборка помещений", "", "Сервис", "",
+            2000.0, op="Списание на затраты"),
+        exp("Р5", "Эквайринг СЕРВИС", "Касса", "Иванов", "", "", "Сервис", "Заказ-наряд", 400.0),
+        exp("Р6", "Нал БЧ (М)", "Касса", "", "", "", "Металлообработка", "", 150.0, op="Расход денег"),
+    ]
+
     def bal(day, box, inc, out):
         return {"День": day, "Касса": box, "Нач": 0.0, "Приход": inc, "Расход": out, "Кон": inc - out}
     balances = [
@@ -113,7 +133,12 @@ class Conn:
         return Arr() if name == "Массив" else Query(self)
 
 
-data = R.load_revenue(Conn(), date(2026, 8, 1), date(2026, 8, 31), ["Масло"])
+data = R.load_revenue(Conn(), date(2026, 8, 1), date(2026, 8, 31), ["Масло"], ["Берг", "Вюрт", "Амтек"])
+g = {e.number: e.group for e in data.expenses}
+assert g == {"Р1": "Оплата поставщикам", "Р2": "Оплата поставщикам", "Р3": "Уборка помещений",
+             "Р4": "Уборка помещений", "Р5": R.REFUND_GROUP, "Р6": "Без статьи (Расход денег)"}, g
+assert R.supplier_matches("ООО \"Вюрт-Русь\"", "Вюрт") and R.supplier_matches("БЕРГ ХОЛДИНГ ООО", "берг")
+assert not R.supplier_matches("Гринлайт", "Берг")
 by = {p.number: p for p in data.payments}
 assert (by["001"].works, by["001"].parts) == (8680.0, 18030.0)
 assert (by["002"].works, by["002"].parts) == (4170.0, 3840.0), "материалы входят в запчасти"
@@ -137,9 +162,19 @@ assert recon[(D2.date(), "Наличные БЧ СЕРВИС")].pko_other == 999
 
 xlsx = build_revenue_report(data)
 wb = load_workbook(BytesIO(xlsx))
-assert wb.sheetnames[:6] == ["Выручка по дням", "Итоги", "Сверка", "Оплаты подробно", "Перемещения ДС",
+assert wb.sheetnames[:9] == ["Выручка по дням", "Итоги", "Сверка", "Оплаты подробно", "Расходы по статьям",
+                            "Расходы по поставщикам", "Расходы подробно", "Перемещения ДС",
                             "Остатки касс"], wb.sheetnames
 assert "Не сходится: 1 из" in wb["Сверка"]["A3"].value
+for name in ("Расходы по статьям", "Расходы по поставщикам", "Расходы подробно"):
+    assert name in wb.sheetnames, name
+art = {r[0]: r for r in wb["Расходы по статьям"].iter_rows(min_row=5, values_only=True) if r[0]}
+assert art["Оплата поставщикам"][4] == 62000 and art["Оплата поставщикам"][8] == 62000
+assert art["Уборка помещений"][2] == 2 and art["Уборка помещений"][3] == 5000
+assert art["Итого"][8] == 67550, art["Итого"]
+sup = [r for r in wb["Расходы по поставщикам"].iter_rows(values_only=True) if r[0] in ("Берг", "Вюрт", "Амтек")]
+assert [(r[0], r[5]) for r in sup] == [("Берг", 50000), ("Вюрт", 12000), ("Амтек", 0)], sup
+assert sup[2][1] == "не найден за период"
 assert "Прочие поступления" in wb.sheetnames and "Замечания" in wb.sheetnames
 ws = wb["Выручка по дням"]
 cells = [c.value for row in ws.iter_rows() for c in row if c.value is not None]

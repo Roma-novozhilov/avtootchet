@@ -9,7 +9,10 @@
    «Сверка» - по каждой кассе за каждый день: приход и расход по регистру денег Далиона
    против оплат отчёта, прочих поступлений, РКО и перемещений; расхождение = что-то не учтено.
 3. «Оплаты подробно» - каждая оплата со всеми полями.
-4. «Перемещения ДС», 5. «Остатки касс», 6. «Прочие поступления», 7. «Замечания».
+4. «Расходы по статьям», «Расходы по поставщикам», «Расходы подробно» - все документы
+   «Расход денег» (кассы и расчётные счета): по статье затрат, а где статьи нет - по виду
+   движения денежных средств; возвраты покупателям - отдельной строкой.
+5. «Перемещения ДС», 6. «Остатки касс», 7. «Прочие поступления», 8. «Замечания».
 """
 from __future__ import annotations
 
@@ -22,7 +25,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from .revenue import DIRECTIONS, METAL, METHODS, SERVICE, Payment, RevenueData
+from .revenue import (DIRECTIONS, METAL, METHODS, REFUND_GROUP, SERVICE, Expense, Payment,
+                      RevenueData, supplier_matches)
 
 FONT = "Arial"
 F = Font(name=FONT, size=10)
@@ -262,6 +266,103 @@ def _sheet_recon(wb: Workbook, data: RevenueData):
     ws.freeze_panes = "C6"
 
 
+# ------------------------------------------------------------------ расходы
+def _dir(e: Expense) -> str:
+    d = e.division.lower()
+    return METAL if "металл" in d else (SERVICE if "сервис" in d else "не указано")
+
+
+def _sheet_expense_articles(wb: Workbook, data: RevenueData):
+    ws = wb.create_sheet("Расходы по статьям")
+    ws["A1"] = f"Расходы по статьям {data.d1:%d.%m.%Y}–{data.d2:%d.%m.%Y}"
+    ws["A1"].font = F_TITLE
+    ws["A2"] = ("Все документы «Расход денег» (кассы и расчётные счета). Группа — статья затрат; "
+                "если статьи нет — вид движения денежных средств. Перемещения между кассами и "
+                "счетами сюда не входят (лист «Перемещения ДС»).")
+    ws["A2"].font = F_SUB
+    groups: dict[str, dict] = {}
+    for e in data.expenses:
+        g = groups.setdefault(e.group, {"kind": e.group_kind, "n": 0, "Касса": 0.0, "Банк": 0.0,
+                                        SERVICE: 0.0, METAL: 0.0, "не указано": 0.0})
+        g["n"] += 1
+        g["Банк" if e.source == "Банк" else "Касса"] += e.amount
+        g[_dir(e)] += e.amount
+    total = sum(e.amount for e in data.expenses) or 1.0
+    rows = []
+    for name, g in sorted(groups.items(), key=lambda kv: -(kv[1]["Касса"] + kv[1]["Банк"])):
+        all_ = g["Касса"] + g["Банк"]
+        rows.append([name, g["kind"], g["n"], round(g["Касса"], 2), round(g["Банк"], 2),
+                     round(g[SERVICE], 2), round(g[METAL], 2), round(g["не указано"], 2), round(all_, 2),
+                     f"{all_ / total:.1%}".replace(".", ",")])
+    end = _table(ws, 4, ["Статья / вид движения", "Что это", "Документов", "Из касс", "С расч. счетов",
+                         "Сервис", "Металлообработка", "Подразделение не указано", "Всего", "Доля"],
+                 rows, money_from=4, widths=[40, 15, 11, 15, 15, 15, 15, 15, 15, 8], total=True)
+    for r in range(5, 5 + len(rows)):
+        if ws.cell(r, 1).value == REFUND_GROUP:
+            for c in range(1, 11):
+                ws.cell(r, c).fill = FILL_WARN
+    ws.cell(end, 1, "Возврат покупателю — деньги, вернувшиеся клиентам по заказ-нарядам и накладным "
+                    "(в выручке они уже стоят минусом).").font = F_SUB
+    ws.freeze_panes = "B5"
+
+
+def _sheet_expense_suppliers(wb: Workbook, data: RevenueData):
+    ws = wb.create_sheet("Расходы по поставщикам")
+    ws["A1"] = f"Расходы по контрагентам {data.d1:%d.%m.%Y}–{data.d2:%d.%m.%Y}"
+    ws["A1"].font = F_TITLE
+    exp = [e for e in data.expenses if e.group != REFUND_GROUP]
+    row = 3
+    if data.main_suppliers:
+        ws.cell(row, 1, "Основные поставщики").font = FB
+        rows = []
+        for sup in data.main_suppliers:
+            items = [e for e in exp if supplier_matches(e.counterparty, sup)]
+            names = sorted({e.counterparty for e in items})
+            rows.append([sup, "; ".join(names) if names else "не найден за период", len(items),
+                         round(sum(e.amount for e in items if e.source != "Банк"), 2),
+                         round(sum(e.amount for e in items if e.source == "Банк"), 2),
+                         round(sum(e.amount for e in items), 2)])
+        row = _table(ws, row + 1, ["Поставщик", "Контрагенты в 1С", "Документов", "Из касс",
+                                   "С расч. счетов", "Всего"], rows, money_from=4,
+                     widths=[34, 44, 11, 15, 15, 15], total=True)
+    ws.cell(row, 1, "Все контрагенты").font = FB
+    per: dict[str, dict] = {}
+    for e in exp:
+        c = per.setdefault(e.counterparty or "(контрагент не указан)",
+                           {"n": 0, "Касса": 0.0, "Банк": 0.0, "groups": defaultdict(float)})
+        c["n"] += 1
+        c["Банк" if e.source == "Банк" else "Касса"] += e.amount
+        c["groups"][e.group] += e.amount
+    total = sum(e.amount for e in exp) or 1.0
+    rows = []
+    for name, c in sorted(per.items(), key=lambda kv: -(kv[1]["Касса"] + kv[1]["Банк"])):
+        all_ = c["Касса"] + c["Банк"]
+        main_group = max(c["groups"].items(), key=lambda kv: kv[1])[0]
+        rows.append([name, main_group, c["n"], round(c["Касса"], 2), round(c["Банк"], 2), round(all_, 2),
+                     f"{all_ / total:.1%}".replace(".", ",")])
+    _table(ws, row + 1, ["Контрагент", "Основная статья / вид движения", "Документов", "Из касс",
+                         "С расч. счетов", "Всего", "Доля"], rows, money_from=4, total=True)
+    ws.column_dimensions["G"].width = 8
+
+
+EXP_HEADERS = ["Дата", "Время", "№", "Касса / счёт", "Источник", "Организация", "Подразделение",
+               "Вид операции", "Контрагент", "Статья затрат", "Вид движения ДС", "Группа в отчёте",
+               "Основание", "Сумма", "Комментарий", "Назначение платежа"]
+
+
+def _sheet_expense_detail(wb: Workbook, data: RevenueData):
+    ws = wb.create_sheet("Расходы подробно")
+    ws["A1"] = "Все документы «Расход денег» за период"
+    ws["A1"].font = F_TITLE
+    rows = [[e.dt.date(), e.dt.strftime("%H:%M"), e.number, e.account, e.source, e.organization,
+             e.division, e.operation, e.counterparty, e.article, e.movement, e.group, e.basis, e.amount,
+             e.comment, e.purpose] for e in data.expenses]
+    end = _table(ws, 3, EXP_HEADERS, rows, money_from=14,
+                 widths=[11, 7, 13, 24, 9, 20, 16, 18, 30, 24, 24, 28, 20, 14, 30, 40], total=True)
+    ws.freeze_panes = "D4"
+    ws.auto_filter.ref = f"A3:{get_column_letter(len(EXP_HEADERS))}{max(3, end - 3)}"
+
+
 # ------------------------------------------------------------------ 3-7
 DETAIL_HEADERS = ["Дата", "Время", "Документ", "№", "Касса", "Организация", "Направление",
                   "Способ оплаты", "Подразделение", "Основание", "Тип ЗН", "Клиент", "Автомобиль",
@@ -317,6 +418,9 @@ def build_revenue_report(data: RevenueData) -> bytes:
     _sheet_totals(wb, data)
     _sheet_recon(wb, data)
     _sheet_detail(wb, "Оплаты подробно", "Все оплаты, вошедшие в выручку", data.revenue)
+    _sheet_expense_articles(wb, data)
+    _sheet_expense_suppliers(wb, data)
+    _sheet_expense_detail(wb, data)
     _sheet_transfers(wb, data)
     _sheet_balances(wb, data)
     if data.other:
