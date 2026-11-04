@@ -57,6 +57,8 @@ class Query:
             rows = self.conn.payments
         elif "КонвертацияДС" in self.Text:
             rows = self.conn.transfers
+        elif "НАЧАЛОПЕРИОДА(Р.Дата, ДЕНЬ)" in self.Text:
+            rows = self.conn.rko
         elif "ОстаткиИОбороты" in self.Text:
             rows = self.conn.balances
         elif "Г.Наименование В (&Имена)" in self.Text:
@@ -92,8 +94,20 @@ class Conn:
     ]
     transfers = [{"Дата": D2, "Номер": "К-1", "Откуда": "Эквайринг СЕРВИС", "Куда": "Наличные СЕРВИС",
                   "Списано": 34720.0, "Зачислено": 34720.0, "Комментарий": ""}]
-    balances = [{"День": D1, "Касса": "Наличные СЕРВИС", "Нач": 0.0, "Приход": 3000.0, "Расход": 0.0,
-                 "Кон": 3000.0}]
+    rko = [{"День": D2, "Касса": "Эквайринг СЕРВИС", "Сумма": 400.0}]
+
+    def bal(day, box, inc, out):
+        return {"День": day, "Касса": box, "Нач": 0.0, "Приход": inc, "Расход": out, "Кон": inc - out}
+    balances = [
+        bal(D1, "Эквайринг СЕРВИС", 34720.0, 0.0),
+        bal(D1, "QR СЕРВИС", 1000.0, 0.0),
+        bal(D1, "Наличные СЕРВИС", 3000.0, 0.0),
+        bal(D1, "Наличные БЧ СЕРВИС", 2600.0, 0.0),      # на 100 больше, чем ПКО: должно всплыть
+        bal(D2, "Нал БЧ (М)", 700.0, 0.0),
+        bal(D2, "Наличные БЧ СЕРВИС", 999.0, 0.0),
+        bal(D2, "Эквайринг СЕРВИС", 0.0, 400.0 + 34720.0),
+        bal(D2, "Наличные СЕРВИС", 34720.0, 0.0),
+    ]
 
     def NewObject(self, name):
         return Arr() if name == "Массив" else Query(self)
@@ -111,9 +125,21 @@ assert not by["007"].is_revenue, "приход без основания - не 
 assert by["008"].amount == -400.0 and (by["008"].works, by["008"].parts) == (-300.0, -100.0), "возврат минусом"
 assert len(data.revenue) == 7 and len(data.other) == 1
 
+recon = {(r.day, r.cashbox): r for r in data.reconciliation}
+bad = [r for r in recon.values() if not r.ok]
+assert len(bad) == 1, [(r.day, r.cashbox, r.other_in, r.other_out) for r in bad]
+b = bad[0]
+assert (b.cashbox, b.other_in) == ("Наличные БЧ СЕРВИС", 100.0), (b.cashbox, b.other_in)
+e2 = recon[(D2.date(), "Эквайринг СЕРВИС")]
+assert (e2.refunds, e2.rko_other, e2.transfers_out, e2.other_out) == (400.0, 0.0, 34720.0, 0.0)
+assert recon[(D2.date(), "Наличные СЕРВИС")].transfers_in == 34720.0
+assert recon[(D2.date(), "Наличные БЧ СЕРВИС")].pko_other == 999.0
+
 xlsx = build_revenue_report(data)
 wb = load_workbook(BytesIO(xlsx))
-assert wb.sheetnames[:5] == ["Выручка по дням", "Итоги", "Оплаты подробно", "Перемещения ДС", "Остатки касс"]
+assert wb.sheetnames[:6] == ["Выручка по дням", "Итоги", "Сверка", "Оплаты подробно", "Перемещения ДС",
+                            "Остатки касс"], wb.sheetnames
+assert "Не сходится: 1 из" in wb["Сверка"]["A3"].value
 assert "Прочие поступления" in wb.sheetnames and "Замечания" in wb.sheetnames
 ws = wb["Выручка по дням"]
 cells = [c.value for row in ws.iter_rows() for c in row if c.value is not None]

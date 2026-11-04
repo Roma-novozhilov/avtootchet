@@ -84,6 +84,7 @@ class RevenueData:
     payments: list[Payment]
     transfers: list[Transfer]
     balances: list[Balance]
+    rko_totals: dict = field(default_factory=dict)   # (день, касса) -> сумма всех РКО
     loaded_at: datetime = field(default_factory=datetime.now)
 
     @property
@@ -97,6 +98,78 @@ class RevenueData:
     @property
     def notes(self) -> list[Payment]:
         return [p for p in self.payments if p.notes]
+
+    @property
+    def reconciliation(self) -> list["ReconRow"]:
+        return reconcile_cash(self)
+
+
+# ------------------------------------------------------------------ сверка с регистром
+TOLERANCE = 0.01
+
+
+@dataclass
+class ReconRow:
+    """Касса за день: приход и расход по регистру денег Далиона против того,
+    из чего они должны складываться."""
+    day: date
+    cashbox: str
+    reg_in: float = 0.0
+    pko_revenue: float = 0.0
+    pko_other: float = 0.0
+    transfers_in: float = 0.0
+    reg_out: float = 0.0
+    refunds: float = 0.0
+    rko_other: float = 0.0
+    transfers_out: float = 0.0
+
+    @property
+    def other_in(self) -> float:
+        return round(self.reg_in - self.pko_revenue - self.pko_other - self.transfers_in, 2)
+
+    @property
+    def other_out(self) -> float:
+        return round(self.reg_out - self.refunds - self.rko_other - self.transfers_out, 2)
+
+    @property
+    def ok(self) -> bool:
+        return abs(self.other_in) < TOLERANCE and abs(self.other_out) < TOLERANCE
+
+
+def reconcile_cash(data: "RevenueData") -> list[ReconRow]:
+    rows: dict[tuple[date, str], ReconRow] = {}
+
+    def row(day: date, box: str) -> ReconRow:
+        return rows.setdefault((day, box), ReconRow(day, box))
+
+    for b in data.balances:
+        r = row(b.day, b.cashbox)
+        r.reg_in += b.income
+        r.reg_out += b.outcome
+    for p in data.payments:
+        r = row(p.dt.date(), p.cashbox)
+        if p.doc == "ПКО":
+            if p.is_revenue:
+                r.pko_revenue += p.amount
+            else:
+                r.pko_other += p.amount
+        else:                       # РКО-возврат: в отчёте со знаком минус
+            r.refunds += -p.amount
+    for (day, box), total in data.rko_totals.items():
+        row(day, box).rko_other += total
+    for r in rows.values():         # возвраты входят в сумму всех РКО
+        r.rko_other -= r.refunds
+    known = {k[1] for k in rows}    # кассы; перемещения с расчётными счетами не учитываются
+    for t in data.transfers:
+        if t.target in known:
+            row(t.dt.date(), t.target).transfers_in += t.amount_in
+        if t.source in known:
+            row(t.dt.date(), t.source).transfers_out += t.amount_out
+    for r in rows.values():
+        for f in ("reg_in", "pko_revenue", "pko_other", "transfers_in", "reg_out", "refunds",
+                  "rko_other", "transfers_out"):
+            setattr(r, f, round(getattr(r, f), 2))
+    return sorted(rows.values(), key=lambda r: (r.day, r.cashbox))
 
 
 # ------------------------------------------------------------------ классификация касс
@@ -306,6 +379,20 @@ Q_TRANSFERS = """ВЫБРАТЬ
 УПОРЯДОЧИТЬ ПО
 	К.Дата"""
 
+Q_RKO_ALL = """ВЫБРАТЬ
+	НАЧАЛОПЕРИОДА(Р.Дата, ДЕНЬ) КАК День,
+	ПРЕДСТАВЛЕНИЕ(Р.СчетДенежныхСредств) КАК Касса,
+	СУММА(Р.СуммаДокумента) КАК Сумма
+ИЗ
+	Документ.РасходДенег КАК Р
+ГДЕ
+	Р.Проведен
+	И Р.Дата МЕЖДУ &Начало И &Конец
+	И Р.СчетДенежныхСредств ССЫЛКА Справочник.Кассы
+СГРУППИРОВАТЬ ПО
+	НАЧАЛОПЕРИОДА(Р.Дата, ДЕНЬ),
+	Р.СчетДенежныхСредств"""
+
 Q_BALANCES = """ВЫБРАТЬ
 	О.Период КАК День,
 	ПРЕДСТАВЛЕНИЕ(О.СчетДенежныхСредств) КАК Касса,
@@ -386,4 +473,8 @@ def load_revenue(conn, d1: date, d2: date, oil_groups: list[str] | None = None) 
     balances = [Balance(_dt(r["День"]).date(), _str(r["Касса"]), _num(r["Нач"]), _num(r["Приход"]),
                         _num(r["Расход"]), _num(r["Кон"]))
                 for r in run(Q_BALANCES, ("День", "Касса", "Нач", "Приход", "Расход", "Кон"))]
-    return RevenueData(d1, d2, payments, transfers, balances)
+    rko: dict = {}
+    for r in run(Q_RKO_ALL, ("День", "Касса", "Сумма")):
+        key = (_dt(r["День"]).date(), _str(r["Касса"]))
+        rko[key] = rko.get(key, 0.0) + _num(r["Сумма"])
+    return RevenueData(d1, d2, payments, transfers, balances, rko)

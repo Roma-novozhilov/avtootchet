@@ -6,6 +6,8 @@
    (Терминал / QR код / Наличные с чеком / без чека; Итого, Работы, Запчасти,
    Продажа запчастей, Продажа масла) и блок Металлообработки (Итого, Работы).
 2. «Итоги» - суммы по дням, направлениям и способам оплаты.
+   «Сверка» - по каждой кассе за каждый день: приход и расход по регистру денег Далиона
+   против оплат отчёта, прочих поступлений, РКО и перемещений; расхождение = что-то не учтено.
 3. «Оплаты подробно» - каждая оплата со всеми полями.
 4. «Перемещения ДС», 5. «Остатки касс», 6. «Прочие поступления», 7. «Замечания».
 """
@@ -33,6 +35,10 @@ FILL_HEAD = PatternFill("solid", fgColor="1F3864")
 FILL_BLOCK = PatternFill("solid", fgColor="D9D9D9")
 FILL_TOTAL = PatternFill("solid", fgColor="D9E1F2")
 FILL_WARN = PatternFill("solid", fgColor="FFEB9C")
+FILL_OK = PatternFill("solid", fgColor="C6EFCE")
+FILL_ERR = PatternFill("solid", fgColor="FFC7CE")
+F_OK = Font(name=FONT, size=12, bold=True, color="006100")
+F_BAD = Font(name=FONT, size=12, bold=True, color="9C0006")
 THIN = Side(style="thin", color="808080")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 MONEY = '#,##0.00;-#,##0.00;"–"'
@@ -208,6 +214,54 @@ def _sheet_totals(wb: Workbook, data: RevenueData):
     ws.freeze_panes = "B4"
 
 
+# ------------------------------------------------------------------ сверка
+RECON_HEADERS = ["Дата", "Касса", "Приход по регистру", "ПКО: выручка", "ПКО: прочие",
+                 "Перемещения (вход)", "Другие документы (приход)", "Расход по регистру", "Возвраты",
+                 "Прочие РКО", "Перемещения (выход)", "Другие документы (расход)", "Результат"]
+
+
+def _sheet_recon(wb: Workbook, data: RevenueData):
+    ws = wb.create_sheet("Сверка")
+    rows = data.reconciliation
+    bad = [r for r in rows if not r.ok]
+    ws["A1"] = "Сверка с регистром денег Далиона"
+    ws["A1"].font = F_TITLE
+    ws["A2"] = ("Приход кассы за день = ПКО (выручка + прочие) + входящие перемещения; "
+                "расход = возвраты + прочие РКО + исходящие перемещения. «Другие документы» — то, "
+                "что двигало кассу, но не вошло ни в одну графу (должно быть 0).")
+    ws["A2"].font = F_SUB
+    if bad:
+        ws["A3"] = f"Не сходится: {len(bad)} из {len(rows)} (касса × день) — см. красные строки"
+        ws["A3"].font = F_BAD
+    else:
+        ws["A3"] = f"Всё сходится: {len(rows)} из {len(rows)} (касса × день)"
+        ws["A3"].font = F_OK
+    table = [[r.day, r.cashbox, r.reg_in, r.pko_revenue, r.pko_other, r.transfers_in, r.other_in,
+              r.reg_out, r.refunds, r.rko_other, r.transfers_out, r.other_out,
+              "сходится" if r.ok else "РАСХОЖДЕНИЕ"] for r in rows]
+    end = _table(ws, 5, RECON_HEADERS, table, money_from=3,
+                 widths=[11, 24] + [14] * 10 + [15], total=True)
+    for i, r in enumerate(rows):
+        res = ws.cell(6 + i, len(RECON_HEADERS))
+        res.fill = FILL_OK if r.ok else FILL_ERR
+        for col, v in ((7, r.other_in), (12, r.other_out)):
+            if abs(v) >= 0.01:
+                ws.cell(6 + i, col).fill = FILL_ERR
+    # итог по кассам за период
+    ws.cell(end, 1, "По кассам за период").font = FB
+    per = {}
+    for r in rows:
+        a = per.setdefault(r.cashbox, [0.0] * 10)
+        for j, v in enumerate((r.reg_in, r.pko_revenue, r.pko_other, r.transfers_in, r.other_in,
+                               r.reg_out, r.refunds, r.rko_other, r.transfers_out, r.other_out)):
+            a[j] += v
+    box_rows = [[box] + [round(v, 2) for v in vals] +
+                ["сходится" if abs(vals[4]) < 0.01 and abs(vals[9]) < 0.01 else "РАСХОЖДЕНИЕ"]
+                for box, vals in sorted(per.items())]
+    _table(ws, end + 1, ["Касса"] + RECON_HEADERS[2:], box_rows, money_from=2, total=False)
+    ws.freeze_panes = "C6"
+
+
 # ------------------------------------------------------------------ 3-7
 DETAIL_HEADERS = ["Дата", "Время", "Документ", "№", "Касса", "Организация", "Направление",
                   "Способ оплаты", "Подразделение", "Основание", "Тип ЗН", "Клиент", "Автомобиль",
@@ -261,6 +315,7 @@ def build_revenue_report(data: RevenueData) -> bytes:
     wb = Workbook()
     _sheet_days(wb, data)
     _sheet_totals(wb, data)
+    _sheet_recon(wb, data)
     _sheet_detail(wb, "Оплаты подробно", "Все оплаты, вошедшие в выручку", data.revenue)
     _sheet_transfers(wb, data)
     _sheet_balances(wb, data)
