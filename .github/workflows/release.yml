@@ -41,7 +41,11 @@ jobs:
               exit 0
             fi
             # описание = текст коммита без служебных строк
-            git log -1 --format=%B | grep -v -E '^(Co-Authored-By:|Claude-Session:|Signed-off-by:|Merge pull request)' > notes.txt
+            # grep без совпадений возвращает 1 - при pipefail это уронило бы шаг
+            git log -1 --format=%B | { grep -v -E '^(Co-Authored-By:|Claude-Session:|Signed-off-by:|Merge pull request)' || true; } > notes.txt
+          fi
+          if ! grep -q '[^[:space:]]' notes.txt; then
+            echo "АвтоОтчёт ${TAG}" > notes.txt     # описание пустое - хоть что-то для окна обновления
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Версия ${TAG}"; cat notes.txt
