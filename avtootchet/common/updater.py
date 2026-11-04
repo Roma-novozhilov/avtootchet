@@ -16,9 +16,11 @@ import hashlib
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,18 +105,43 @@ def available() -> str | None:
 
 
 # ------------------------------------------------------------------ сеть
+_CTX: ssl.SSLContext | None = None
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Проверка сертификатов средствами Windows (как у браузера и PowerShell): Windows сама
+    докачивает недостающие корневые сертификаты, а встроенная проверка Python - нет."""
+    global _CTX
+    if _CTX is None:
+        try:
+            import truststore
+            _CTX = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        except Exception:  # noqa: BLE001 - запасной вариант: свой набор сертификатов
+            _CTX = ssl.create_default_context()
+            try:
+                import certifi
+                _CTX.load_verify_locations(certifi.where())
+            except Exception:  # noqa: BLE001
+                pass
+    return _CTX
+
+
 def _get(url: str, accept: str, timeout: float = 30) -> urllib.request.addinfourl:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
     try:
-        return urllib.request.urlopen(req, timeout=timeout)
+        return urllib.request.urlopen(req, timeout=timeout, context=_ssl_context())
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise UpdateError("На GitHub нет опубликованных версий (или репозиторий закрыт).") from None
         if e.code == 403:
             raise UpdateError("GitHub временно ограничил запросы. Попробуйте через час.") from None
         raise UpdateError(f"GitHub ответил ошибкой {e.code}.") from None
-    except (urllib.error.URLError, TimeoutError, OSError):
-        raise UpdateError("Нет связи с GitHub. Проверьте интернет на этом компьютере.") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        reason = getattr(e, "reason", e)
+        host = urllib.parse.urlsplit(url).hostname
+        raise UpdateError(f"Нет связи с GitHub ({host}).\n\nПричина: {reason}\n\n"
+                          "Проверьте интернет на этом компьютере, прокси и антивирус/брандмауэр "
+                          "(программе нужен доступ к api.github.com и github.com по порту 443).") from None
 
 
 def check(repo: str | None = None, name: str | None = None) -> Release | None:
