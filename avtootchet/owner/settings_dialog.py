@@ -124,7 +124,7 @@ class OwnerSettingsDialog(QDialog):
             if not boxes:
                 QMessageBox.information(self, "1С", "Подключение работает, но касс не найдено.")
                 return
-            lines = "\n".join(f"• {box}  ({org})" for box, org in boxes)
+            lines = "\n".join(f"• {box}  ({org})" if org else f"• {box}" for box, org in boxes)
             QMessageBox.information(
                 self, "1С: подключение работает",
                 f"Кассы в базе:\n\n{lines}\n\nДля кассовой книги одной организации "
