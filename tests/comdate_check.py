@@ -2,9 +2,7 @@
 
     python tests/comdate_check.py
 """
-import os
 import sys
-import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -15,16 +13,9 @@ from avtootchet.common.comdate import com_datetime, inline_dates, literal  # noq
 # наивная дата (как отдаёт поддельная 1С в тестах) - без изменений
 assert com_datetime(datetime(2026, 11, 2, 0, 0)) == datetime(2026, 11, 2, 0, 0)
 
-# pywin32: полночь по Москве приходит как 21:00 UTC предыдущего дня
-if hasattr(time, "tzset"):
-    os.environ["TZ"] = "Europe/Moscow"
-    time.tzset()
-    utc = datetime(2026, 11, 1, 21, 0, tzinfo=timezone.utc)
-    assert com_datetime(utc) == datetime(2026, 11, 2, 0, 0), com_datetime(utc)
-else:  # Windows: пояс сборщика неизвестен - проверяем, что вернулось местное время
-    utc = datetime(2026, 11, 1, 21, 0, tzinfo=timezone.utc)
-    local = utc.astimezone().replace(tzinfo=None)
-    assert com_datetime(utc) == local
+# дата из 1С с пометкой пояса - время не пересчитывается, берётся как записано
+aware = datetime(2026, 11, 2, 18, 47, tzinfo=timezone.utc)
+assert com_datetime(aware) == datetime(2026, 11, 2, 18, 47), com_datetime(aware)
 assert com_datetime(datetime(2026, 11, 2, 9, 30, tzinfo=timezone(timedelta(hours=3)))).tzinfo is None
 
 assert literal(datetime(2026, 11, 4, 23, 59, 59)) == "ДАТАВРЕМЯ(2026, 11, 4, 23, 59, 59)"
