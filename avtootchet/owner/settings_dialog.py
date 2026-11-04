@@ -1,12 +1,14 @@
 """Настройки программы владельца."""
 from __future__ import annotations
 
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-                               QSpinBox, QVBoxLayout, QWidget)
+                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+                               QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from ..common.crypto import new_secret
 from ..common.ui import run_in_background
+from .probe import run_probe
 from .sources import ComSource
 
 
@@ -62,8 +64,13 @@ class OwnerSettingsDialog(QDialog):
         self.btn_test = QPushButton("Проверить подключение и показать кассы")
         self.btn_test.clicked.connect(self._test)
         f.addRow(self.btn_test)
+        self.btn_probe = QPushButton("Проверить структуру базы (без сумм)")
+        self.btn_probe.setToolTip("Как в этой базе устроены оплаты: только количества и названия, "
+                                  "без сумм и клиентов. За последние 31 день.")
+        self.btn_probe.clicked.connect(self._probe)
+        f.addRow(self.btn_probe)
         self.com_widgets = [self.server, self.base, self.user, self.password, self.platform,
-                            self.organization, self.cashboxes, self.btn_test]
+                            self.organization, self.cashboxes, self.btn_test, self.btn_probe]
         lay.addWidget(g)
 
         # --- приём файлов
@@ -132,6 +139,20 @@ class OwnerSettingsDialog(QDialog):
 
         run_in_background(lambda: self._com_source().list_cashboxes(), done)
 
+    def _probe(self):
+        self.btn_probe.setEnabled(False)
+        self.btn_probe.setText("Проверяю базу… (до минуты)")
+
+        def done(text, err):
+            self.btn_probe.setEnabled(True)
+            self.btn_probe.setText("Проверить структуру базы (без сумм)")
+            if err:
+                QMessageBox.critical(self, "1С", str(err))
+                return
+            TextDialog("Структура базы", text, self).exec()
+
+        run_in_background(lambda: run_probe(self._com_source()), done)
+
     def _pick_demo(self):
         path, _ = QFileDialog.getOpenFileName(self, "Файл выгрузки", self.demo_file.text(),
                                               "Выгрузка (*.json)")
@@ -150,3 +171,36 @@ class OwnerSettingsDialog(QDialog):
         self.s["secret"] = self.secret.text().strip()
         self.s.save()
         self.accept()
+
+
+class TextDialog(QDialog):
+    """Текст с кнопкой «Скопировать» (через удалённый стол копируется на свой компьютер)."""
+
+    def __init__(self, title: str, text: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(760, 560)
+        lay = QVBoxLayout(self)
+        hint = QLabel("Только количества и названия, без сумм и клиентов. Нажмите «Скопировать» "
+                      "и вставьте текст в чат.")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        self.text = QPlainTextEdit(text)
+        self.text.setReadOnly(True)
+        lay.addWidget(self.text, 1)
+        row = QHBoxLayout()
+        row.addStretch()
+        copy = QPushButton("Скопировать")
+        copy.setObjectName("primary")
+        copy.clicked.connect(self._copy)
+        row.addWidget(copy)
+        close = QPushButton("Закрыть")
+        close.clicked.connect(self.accept)
+        row.addWidget(close)
+        lay.addLayout(row)
+        self.copy_btn = copy
+
+    def _copy(self):
+        QGuiApplication.clipboard().setText(self.text.toPlainText())
+        self.copy_btn.setText("Скопировано ✓")
