@@ -1,8 +1,8 @@
 """Программа владельца: получить данные 1С, принять книгу бухгалтера, проверить,
-сгрузить правильный отчёт на флешку, удалить всё с ПК.
+сохранить правильный отчёт (зашифрованным паролем) на флешку или в папку, удалить всё с ПК.
 
 Данные хранятся только в памяти программы. На диск пишется лишь готовый отчёт
-(на выбранную флешку), настройки и журнал без самих данных."""
+(зашифрованным, на выбранную флешку или в папку), настройки и журнал без самих данных."""
 from __future__ import annotations
 
 import sys
@@ -25,6 +25,7 @@ from ..common.settings import Settings
 from ..common.transfer import DEFAULT_PORT, DiscoveryResponder, Receiver, local_ips
 from ..common import preview, updater
 from ..common.update_ui import UpdateController
+from ..common.xlsx_crypto import ReportPasswordError, check_password, encrypt_xlsx
 from ..common.ui import STYLE, StatusDot, error_box, money, run_in_background
 from .cashbook_parser import BookParseError, parse_cashbook
 from .drives import in_remote_session, removable_drives, write_to_drive
@@ -42,7 +43,11 @@ DEFAULTS = {
             "oil_groups": "Масло"},
     "port": DEFAULT_PORT,
     "secret": "",
+    "report_password": "",
+    "folders": [],          # папки, выбранные для сохранения отчётов (последние сверху)
+    "last_target": "",
 }
+PICK_FOLDER = "::pick-folder::"
 
 
 class Session:
@@ -179,7 +184,7 @@ class OwnerWindow(QMainWindow):
         self.btn_revenue.setObjectName("primary")
         self.btn_revenue.setMinimumWidth(190)
         self.btn_revenue.setToolTip("Забрать оплаты из 1С, построить лист выручки, показать его "
-                                    "в Excel для проверки и сгрузить на флешку")
+                                    "в Excel для проверки и сохранить (зашифрованным) на флешку или в папку")
         self.btn_revenue.clicked.connect(self.revenue_report)
         r3.addWidget(self.dot_rev)
         r3.addWidget(self.lbl_rev, 1)
@@ -222,16 +227,17 @@ class OwnerWindow(QMainWindow):
         # --- низ: флешка и удаление
         g = QGroupBox("Отчёт")
         row = QHBoxLayout(g)
-        row.addWidget(QLabel("Флешка:"))
+        row.addWidget(QLabel("Куда сохранить:"))
         self.drives = QComboBox()
-        self.drives.setMinimumWidth(320)
+        self.drives.setMinimumWidth(360)
+        self.drives.activated.connect(self._target_chosen)
         row.addWidget(self.drives)
         refresh = QPushButton("↻")
         refresh.setFixedWidth(36)
         refresh.setToolTip("Обновить список флешек")
         refresh.clicked.connect(self.refresh_drives)
         row.addWidget(refresh)
-        self.btn_usb = QPushButton("Сгрузить на флешку")
+        self.btn_usb = QPushButton("Сохранить отчёт проверки")
         self.btn_usb.clicked.connect(self.export_usb)
         row.addWidget(self.btn_usb)
         row.addStretch()
@@ -303,8 +309,7 @@ class OwnerWindow(QMainWindow):
             self.lbl_book.setText("Кассовая книга бухгалтера: ожидается…")
         self.btn_book_period.setEnabled(bool(s.book))
         self.btn_check.setEnabled(bool(s.onec and s.book))
-        self.btn_usb.setEnabled(bool(s.report) and self.drives.count() > 0
-                                and self.drives.currentData() is not None)
+        self.btn_usb.setEnabled(bool(s.report) and self._target() is not None)
         self.btn_delete.setEnabled(s.has_data)
         if not s.result:
             self.table.setRowCount(0)
@@ -423,9 +428,14 @@ class OwnerWindow(QMainWindow):
             error_box(self, "Отчёт по выручке", "Отчёт по выручке строится только из 1С:Далион: "
                       "в «Настройках» выберите источник «1С:Далион через COM».")
             return
-        if not self.drives.currentData():
-            error_box(self, "Флешка", "Вставьте флешку и выберите её в списке «Флешка» внизу окна: "
-                      "после проверки отчёт запишется на неё.")
+        if not self._target():
+            error_box(self, "Куда сохранить", "Выберите внизу окна, куда сохранить отчёт: флешку "
+                      "или папку («Выбрать папку…»).")
+            return
+        try:
+            check_password(self.settings["report_password"])
+        except ReportPasswordError as e:
+            error_box(self, "Пароль для отчётов", str(e))
             return
         self.btn_revenue.setEnabled(False)
         self.btn_revenue.setText("Строю…")
@@ -463,27 +473,38 @@ class OwnerWindow(QMainWindow):
 
     def _export_revenue(self):
         s = self.session
-        root = self.drives.currentData()
         if not (s.revenue and s.revenue_report):
             return
         name = revenue_filename(s.revenue)
         self._log("Отчёт по выручке открыт для проверки")
-        if not preview.confirm_with_preview(self, bytes(s.revenue_report), name, "сгрузить на флешку"):
+        if not preview.confirm_with_preview(self, bytes(s.revenue_report), name, "сохранить отчёт"):
             self._log("Отправка отменена владельцем")
             return
+        self._save_report(bytes(s.revenue_report), name, "Отчёт по выручке")
+
+    def _save_report(self, data: bytes, name: str, what: str) -> bool:
+        """Зашифровать паролем из настроек и записать на выбранную флешку или в папку."""
+        root = self._target()
         if not root:
-            error_box(self, "Флешка", "Флешка не выбрана — отчёт не записан. Выберите её и нажмите "
-                      "«Отчёт по выручке» ещё раз.")
-            return
+            error_box(self, "Куда сохранить", "Не выбрано, куда сохранить отчёт — он не записан. "
+                      "Выберите флешку или папку и повторите.")
+            return False
         try:
-            target = write_to_drive(root, name, bytes(s.revenue_report))
+            enc = encrypt_xlsx(data, self.settings["report_password"])
+        except ReportPasswordError as e:
+            error_box(self, "Пароль для отчётов", str(e))
+            return False
+        try:
+            target = write_to_drive(root, name, enc)
         except OSError as e:
-            error_box(self, "Флешка", f"Не удалось записать отчёт: {e}")
-            return
-        self._log("Отчёт по выручке сгружен на флешку", f"{root} {target.name}")
-        QMessageBox.information(self, "Готово", f"Отчёт записан на флешку:\n{target}\n\n"
+            error_box(self, "Сохранение", f"Не удалось записать отчёт: {e}")
+            return False
+        self._log(f"{what} сохранён (зашифрован)", f"{root} {target.name}")
+        QMessageBox.information(self, "Готово", f"Отчёт сохранён:\n{target}\n\nФайл зашифрован "
+                                "паролем для отчётов — Excel спросит его при открытии.\n\n"
                                 "Когда закончите, нажмите «Удалить отчётность», чтобы стереть "
-                                "данные с этого ПК.")
+                                "данные из программы.")
+        return True
 
     def open_book_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Кассовая книга бухгалтера", "",
@@ -557,48 +578,73 @@ class OwnerWindow(QMainWindow):
 
         run_in_background(removable_drives, done)
 
+    def _target(self) -> str | None:
+        data = self.drives.currentData()
+        return None if data in (None, PICK_FOLDER) else data
+
     def _apply_drives(self, drives):
         current = self.drives.currentData()
-        roots = [d.root for d in drives]
-        if roots == [self.drives.itemData(i) for i in range(self.drives.count())]:
-            return
-        self.drives.clear()
-        for d in drives:
-            self.drives.addItem(d.title, d.root)
-        if not drives:
+        folders = [f for f in self.settings["folders"] if f not in {d.root for d in drives}]
+        items = [(d.title, d.root) for d in drives] + [(f"Папка: {f}", f) for f in folders]
+        if not items:
             hint = ("Флешка не видна: включите «Диски» в настройках удалённого стола"
-                    if in_remote_session() else "Флешка не вставлена")
-            self.drives.addItem(hint, None)
-        elif current in roots:
-            self.drives.setCurrentIndex(roots.index(current))
+                    if in_remote_session() else "Флешка не вставлена — можно выбрать папку")
+            items.append((hint, None))
+        items.append(("📁  Выбрать папку…", PICK_FOLDER))
+        if [i[1] for i in items] == [self.drives.itemData(i) for i in range(self.drives.count())]:
+            return
+        self.drives.blockSignals(True)
+        self.drives.clear()
+        for title, data in items:
+            self.drives.addItem(title, data)
+        datas = [i[1] for i in items]
+        want = current if current in datas and current != PICK_FOLDER else self.settings["last_target"]
+        if want in datas:
+            self.drives.setCurrentIndex(datas.index(want))
+        self.drives.blockSignals(False)
         self._refresh_state()
+
+    def _target_chosen(self, index: int):
+        if self.drives.itemData(index) != PICK_FOLDER:
+            self.settings["last_target"] = self.drives.itemData(index) or ""
+            self.settings.save()
+            self._refresh_state()
+            return
+        start = self.settings["last_target"] or str(Path.home())
+        path = QFileDialog.getExistingDirectory(self, "Папка для отчётов", start)
+        if path:
+            path = str(Path(path))
+            folders = [path] + [f for f in self.settings["folders"] if f != path]
+            self.settings["folders"] = folders[:5]
+            self.settings["last_target"] = path
+            self.settings.save()
+            self._log("Выбрана папка для отчётов", path)
+        self.drives.clear()            # пересобрать список и выбрать нужное
+        self.refresh_drives()
 
     def export_usb(self):
         s = self.session
-        root = self.drives.currentData()
+        root = self._target()
         if not (s.report and s.result and root):
             return
         if not s.result.is_clean:
             ans = QMessageBox.question(
                 self, "Есть расхождения",
                 f"Найдено ошибок: {s.result.errors}. В отчёт попадут правильная кассовая книга "
-                "по данным 1С и список всех расхождений.\n\nСгрузить на флешку?")
+                "по данным 1С и список всех расхождений.\n\nСохранить отчёт?")
             if ans != QMessageBox.Yes:
                 return
+        try:
+            check_password(self.settings["report_password"])
+        except ReportPasswordError as e:
+            error_box(self, "Пароль для отчётов", str(e))
+            return
         name = report_filename(s.result)
         self._log("Отчёт открыт для проверки")
-        if not preview.confirm_with_preview(self, bytes(s.report), name, "сгрузить на флешку"):
+        if not preview.confirm_with_preview(self, bytes(s.report), name, "сохранить отчёт"):
             self._log("Отправка отменена владельцем")
             return
-        try:
-            target = write_to_drive(root, name, bytes(s.report))
-        except OSError as e:
-            error_box(self, "Флешка", f"Не удалось записать отчёт: {e}")
-            return
-        self._log("Отчёт сгружен на флешку", f"{root} {target.name}")
-        QMessageBox.information(self, "Готово", f"Отчёт записан на флешку:\n{target}\n\n"
-                                "Когда закончите, нажмите «Удалить отчётность», чтобы стереть "
-                                "данные с этого ПК.")
+        self._save_report(bytes(s.report), name, "Отчёт проверки")
 
     def delete_all(self, ask: bool = True):
         if ask and QMessageBox.question(

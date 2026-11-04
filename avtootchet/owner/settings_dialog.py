@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                                QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from ..common.crypto import new_secret
+from ..common.xlsx_crypto import MIN_PASSWORD
 from ..common.ui import run_in_background
 from .probe import run_probe
 from .sources import ComSource
@@ -71,6 +72,27 @@ class OwnerSettingsDialog(QDialog):
         f.addRow(self.btn_probe)
         self.com_widgets = [self.server, self.base, self.user, self.password, self.platform,
                             self.organization, self.cashboxes, self.btn_test, self.btn_probe]
+        lay.addWidget(g)
+
+        # --- пароль отчётов
+        g = QGroupBox("Пароль для отчётов")
+        f = QFormLayout(g)
+        self.rep_pass = QLineEdit(settings["report_password"])
+        self.rep_pass.setEchoMode(QLineEdit.Password)
+        self.rep_pass2 = QLineEdit(settings["report_password"])
+        self.rep_pass2.setEchoMode(QLineEdit.Password)
+        show = QCheckBox("Показать")
+        show.toggled.connect(lambda on: [w.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password)
+                                         for w in (self.rep_pass, self.rep_pass2)])
+        f.addRow("Пароль:", self.rep_pass)
+        f.addRow("Ещё раз:", self.rep_pass2)
+        f.addRow(show)
+        hint = QLabel(f"Каждый сохранённый отчёт шифруется этим паролем (AES-256): Excel спросит его "
+                      f"при открытии. Не меньше {MIN_PASSWORD} символов. Если пароль забыть, "
+                      "отчёт не открыть — запишите его в надёжном месте.")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        f.addRow(hint)
         lay.addWidget(g)
 
         # --- приём файлов
@@ -160,11 +182,21 @@ class OwnerSettingsDialog(QDialog):
             self.demo_file.setText(path)
 
     def _save(self):
+        pw, pw2 = self.rep_pass.text(), self.rep_pass2.text()
+        if pw != pw2:
+            QMessageBox.warning(self, "Пароль для отчётов", "Пароли не совпадают.")
+            return
+        if pw and len(pw) < MIN_PASSWORD:
+            QMessageBox.warning(self, "Пароль для отчётов",
+                                f"Пароль слишком короткий: нужно не меньше {MIN_PASSWORD} символов.")
+            return
+        self.s["report_password"] = pw
         self.s["source"] = self.source.currentData()
         self.s["demo_file"] = self.demo_file.text().strip()
         self.s["com"] = {"server": self.server.text().strip(), "base": self.base.text().strip(),
                          "user": self.user.text().strip(), "password": self.password.text(),
                          "cashboxes": self.cashboxes.text().strip(),
+                         "oil_groups": self.s["com"].get("oil_groups", "Масло"),
                          "platform": self.platform.text().strip(),
                          "organization": self.organization.text().strip()}
         self.s["port"] = self.port.value()

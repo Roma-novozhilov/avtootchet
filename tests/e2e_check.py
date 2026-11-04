@@ -120,6 +120,14 @@ def fake_ask(parent, pf, action):
 
 
 preview._ask = fake_ask
+owner.settings["report_password"] = ""      # без пароля отчёт не сохраняется
+errors = []
+import avtootchet.owner.app as owner_app  # noqa: E402
+owner_app.error_box = lambda parent, title, text: errors.append(title)
+owner.export_usb()
+assert errors == ["Пароль для отчётов"] and not list(usb.glob("*.xlsx")), errors
+PASSWORD = "Тест-пароль-1"
+owner.settings["report_password"] = PASSWORD
 seen["answer"] = False                      # «Не отправлять»
 owner.export_usb()
 assert not list(usb.glob("*.xlsx")), "после «Не отправлять» на флешке ничего не должно быть"
@@ -131,6 +139,10 @@ assert not list(temp_dir().glob("preview_*")), "папки предпросмо�
 files = list(usb.glob("*.xlsx"))
 print("на флешке ->", [f.name for f in files])
 assert len(files) == 1
+from avtootchet.common.xlsx_crypto import decrypt_xlsx, is_encrypted  # noqa: E402
+saved = files[0].read_bytes()
+assert is_encrypted(saved), "отчёт на флешке должен быть зашифрован"
+assert decrypt_xlsx(saved, PASSWORD) == bytes(owner.session.report), "пароль должен открывать отчёт"
 
 # --- удаление
 owner.delete_all(ask=False)
