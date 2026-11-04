@@ -85,6 +85,8 @@ class RevenueData:
     transfers: list[Transfer]
     balances: list[Balance]
     rko_totals: dict = field(default_factory=dict)   # (день, касса) -> сумма всех РКО
+    expenses: list["Expense"] = field(default_factory=list)
+    main_suppliers: list[str] = field(default_factory=list)
     loaded_at: datetime = field(default_factory=datetime.now)
 
     @property
@@ -102,6 +104,52 @@ class RevenueData:
     @property
     def reconciliation(self) -> list["ReconRow"]:
         return reconcile_cash(self)
+
+
+# ------------------------------------------------------------------ расходы
+REFUND_GROUP = "Возврат покупателю"
+
+
+@dataclass
+class Expense:
+    """Документ «Расход денег» (касса или расчётный счёт)."""
+    dt: datetime
+    number: str
+    account: str          # касса или расчётный счёт
+    source: str           # «Касса» / «Банк»
+    operation: str
+    counterparty: str
+    article: str          # статья затрат
+    movement: str         # вид движения денежных средств
+    division: str
+    organization: str
+    basis: str            # вид документа-основания
+    amount: float
+    comment: str = ""
+    purpose: str = ""
+
+    @property
+    def group(self) -> str:
+        """Статья; если её нет - вид движения ДС; возвраты покупателям - отдельно."""
+        if self.basis in ("Заказ-наряд", "Расходная накладная"):
+            return REFUND_GROUP
+        if self.article:
+            return self.article
+        if self.movement:
+            return self.movement
+        return f"Без статьи ({self.operation or 'вид операции не указан'})"
+
+    @property
+    def group_kind(self) -> str:
+        if self.group == REFUND_GROUP:
+            return "возврат"
+        return "статья" if self.article else ("вид движения ДС" if self.movement else "—")
+
+
+def supplier_matches(counterparty: str, supplier: str) -> bool:
+    """«Берг» найдёт и «БЕРГ ХОЛДИНГ ООО», и «ООО "Берг"»."""
+    norm = lambda t: re.sub(r"[^0-9a-zа-яё]", "", t.lower().replace("ё", "е"))  # noqa: E731
+    return bool(norm(supplier)) and norm(supplier) in norm(counterparty)
 
 
 # ------------------------------------------------------------------ сверка с регистром
@@ -393,6 +441,36 @@ Q_RKO_ALL = """ВЫБРАТЬ
 	НАЧАЛОПЕРИОДА(Р.Дата, ДЕНЬ),
 	Р.СчетДенежныхСредств"""
 
+Q_EXPENSES = """ВЫБРАТЬ
+	Р.Дата КАК Дата,
+	Р.Номер КАК Номер,
+	ПРЕДСТАВЛЕНИЕ(Р.СчетДенежныхСредств) КАК Счет,
+	ВЫБОР КОГДА Р.СчетДенежныхСредств ССЫЛКА Справочник.Кассы ТОГДА "Касса" ИНАЧЕ "Банк" КОНЕЦ КАК Источник,
+	ПРЕДСТАВЛЕНИЕ(Р.ВидОперации) КАК ВидОперации,
+	ПРЕДСТАВЛЕНИЕ(Р.Контрагент) КАК Контрагент,
+	ПРЕДСТАВЛЕНИЕ(Р.Статья) КАК Статья,
+	ПРЕДСТАВЛЕНИЕ(Р.ВидДвиженияДенежныхСредств) КАК ВидДвижения,
+	ПРЕДСТАВЛЕНИЕ(Р.Подразделение) КАК Подразделение,
+	ПРЕДСТАВЛЕНИЕ(Р.Организация) КАК Организация,
+	ВЫБОР
+		КОГДА ТИПЗНАЧЕНИЯ(Р.ДокументОснование) = ТИП(Документ.ЗаказНаряд) ТОГДА "Заказ-наряд"
+		КОГДА ТИПЗНАЧЕНИЯ(Р.ДокументОснование) = ТИП(Документ.РасходнаяНакладная) ТОГДА "Расходная накладная"
+		КОГДА ТИПЗНАЧЕНИЯ(Р.ДокументОснование) = ТИП(Документ.ПриходнаяНакладная) ТОГДА "Приходная накладная"
+		КОГДА ТИПЗНАЧЕНИЯ(Р.ДокументОснование) = ТИП(Документ.ЗатратыНаПокупкуТоваров) ТОГДА "Затраты на покупку товаров"
+		КОГДА ТИПЗНАЧЕНИЯ(Р.ДокументОснование) = ТИП(Документ.ПриходДенег) ТОГДА "Приход денег"
+		ИНАЧЕ ""
+	КОНЕЦ КАК Основание,
+	Р.СуммаДокумента КАК Сумма,
+	ВЫРАЗИТЬ(Р.Комментарий КАК СТРОКА(200)) КАК Комментарий,
+	ВЫРАЗИТЬ(Р.НазначениеПлатежа КАК СТРОКА(200)) КАК Назначение
+ИЗ
+	Документ.РасходДенег КАК Р
+ГДЕ
+	Р.Проведен
+	И Р.Дата МЕЖДУ &Начало И &Конец
+УПОРЯДОЧИТЬ ПО
+	Р.Дата"""
+
 Q_BALANCES = """ВЫБРАТЬ
 	О.Период КАК День,
 	ПРЕДСТАВЛЕНИЕ(О.СчетДенежныхСредств) КАК Касса,
@@ -422,7 +500,8 @@ def _num(v) -> float:
         return 0.0
 
 
-def load_revenue(conn, d1: date, d2: date, oil_groups: list[str] | None = None) -> RevenueData:
+def load_revenue(conn, d1: date, d2: date, oil_groups: list[str] | None = None,
+                 main_suppliers: list[str] | None = None) -> RevenueData:
     """conn - подключение COM (V83.COMConnector.Connect)."""
     start = datetime(d1.year, d1.month, d1.day)
     end = datetime(d2.year, d2.month, d2.day, 23, 59, 59)
@@ -477,4 +556,13 @@ def load_revenue(conn, d1: date, d2: date, oil_groups: list[str] | None = None) 
     for r in run(Q_RKO_ALL, ("День", "Касса", "Сумма")):
         key = (_dt(r["День"]).date(), _str(r["Касса"]))
         rko[key] = rko.get(key, 0.0) + _num(r["Сумма"])
-    return RevenueData(d1, d2, payments, transfers, balances, rko)
+    exp_cols = ("Дата", "Номер", "Счет", "Источник", "ВидОперации", "Контрагент", "Статья",
+                "ВидДвижения", "Подразделение", "Организация", "Основание", "Сумма", "Комментарий",
+                "Назначение")
+    expenses = [Expense(_dt(r["Дата"]), _str(r["Номер"]), _str(r["Счет"]), _str(r["Источник"]),
+                        _str(r["ВидОперации"]), _str(r["Контрагент"]), _str(r["Статья"]),
+                        _str(r["ВидДвижения"]), _str(r["Подразделение"]), _str(r["Организация"]),
+                        _str(r["Основание"]), _num(r["Сумма"]), _str(r["Комментарий"]),
+                        _str(r["Назначение"]))
+                for r in run(Q_EXPENSES, exp_cols)]
+    return RevenueData(d1, d2, payments, transfers, balances, rko, expenses, list(main_suppliers or []))

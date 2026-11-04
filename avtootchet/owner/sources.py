@@ -157,9 +157,10 @@ class ComSource(DataSource):
 
     def __init__(self, server: str, base: str, user: str, password: str,
                  cashboxes: str = "", organization: str = "", platform: str = "",
-                 oil_groups: str = "Масло"):
+                 oil_groups: str = "Масло", main_suppliers: str = ""):
         self.server, self.base, self.user, self.password = server, base, user, password
         self.oil_groups = [g.strip() for g in (oil_groups or "Масло").split(",") if g.strip()]
+        self.main_suppliers = [g.strip() for g in (main_suppliers or "").split(",") if g.strip()]
         self.platform = platform.strip()   # версия платформы, на которой работает база
         self.cashboxes = [c.strip() for c in cashboxes.split(",") if c.strip()]
         self.organization = organization.strip()
@@ -253,7 +254,7 @@ class ComSource(DataSource):
         self._check_settings()
         conn = self._connect()
         try:
-            return load_revenue(conn, d1, d2, self.oil_groups)
+            return load_revenue(conn, d1, d2, self.oil_groups, self.main_suppliers)
         except Exception as e:  # noqa: BLE001
             raise SourceError(f"Ошибка запроса к 1С: {e}") from None
 
@@ -296,5 +297,5 @@ def make_source(settings) -> DataSource:
         c = settings["com"]
         return ComSource(c["server"], c["base"], c["user"], c["password"],
                          c.get("cashboxes", ""), c.get("organization", ""), c.get("platform", ""),
-                         c.get("oil_groups", "Масло"))
+                         c.get("oil_groups", "Масло"), c.get("main_suppliers", ""))
     return DemoSource(settings["demo_file"])

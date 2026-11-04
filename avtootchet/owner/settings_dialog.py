@@ -55,12 +55,17 @@ class OwnerSettingsDialog(QDialog):
         self.organization.setPlaceholderText("пусто = все организации")
         self.platform = QLineEdit(com.get("platform", "8.3.27.2325"))
         self.platform.setPlaceholderText("версия платформы базы, например 8.3.27.2325")
+        self.oil_groups = QLineEdit(com.get("oil_groups", "Масло"))
+        self.oil_groups.setPlaceholderText("группы номенклатуры через запятую, например: Масло")
+        self.suppliers = QLineEdit(com.get("main_suppliers", ""))
+        self.suppliers.setPlaceholderText("через запятую: Берг, Вюрт, …")
         self.cashboxes = QLineEdit(com.get("cashboxes", ""))
         self.cashboxes.setPlaceholderText("через запятую; пусто = все кассы")
         for label, w in (("Путь к базе / сервер:", self.server), ("База на сервере:", self.base),
                          ("Пользователь:", self.user), ("Пароль:", self.password),
                          ("Версия платформы:", self.platform),
-                         ("Организация:", self.organization), ("Кассы:", self.cashboxes)):
+                         ("Организация:", self.organization), ("Кассы:", self.cashboxes),
+                         ("Группы масла:", self.oil_groups), ("Основные поставщики:", self.suppliers)):
             f.addRow(label, w)
         self.btn_test = QPushButton("Проверить подключение и показать кассы")
         self.btn_test.clicked.connect(self._test)
@@ -71,7 +76,8 @@ class OwnerSettingsDialog(QDialog):
         self.btn_probe.clicked.connect(self._probe)
         f.addRow(self.btn_probe)
         self.com_widgets = [self.server, self.base, self.user, self.password, self.platform,
-                            self.organization, self.cashboxes, self.btn_test, self.btn_probe]
+                            self.organization, self.cashboxes, self.oil_groups, self.suppliers,
+                            self.btn_test, self.btn_probe]
         lay.addWidget(g)
 
         # --- пароль отчётов
@@ -138,7 +144,8 @@ class OwnerSettingsDialog(QDialog):
     def _com_source(self) -> ComSource:
         return ComSource(self.server.text().strip(), self.base.text().strip(),
                          self.user.text().strip(), self.password.text(),
-                         self.cashboxes.text(), self.organization.text(), self.platform.text())
+                         self.cashboxes.text(), self.organization.text(), self.platform.text(),
+                         self.oil_groups.text(), self.suppliers.text())
 
     def _test(self):
         self.btn_test.setEnabled(False)
@@ -196,7 +203,8 @@ class OwnerSettingsDialog(QDialog):
         self.s["com"] = {"server": self.server.text().strip(), "base": self.base.text().strip(),
                          "user": self.user.text().strip(), "password": self.password.text(),
                          "cashboxes": self.cashboxes.text().strip(),
-                         "oil_groups": self.s["com"].get("oil_groups", "Масло"),
+                         "oil_groups": self.oil_groups.text().strip() or "Масло",
+                         "main_suppliers": self.suppliers.text().strip(),
                          "platform": self.platform.text().strip(),
                          "organization": self.organization.text().strip()}
         self.s["port"] = self.port.value()
