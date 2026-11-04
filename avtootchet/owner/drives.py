@@ -85,7 +85,7 @@ def removable_drives() -> list[Drive]:
 def write_to_drive(drive_root: str, filename: str, data: bytes) -> Path:
     root = Path(drive_root)
     if not root.exists():
-        raise OSError("Флешка не найдена - возможно, её вынули")
+        raise OSError("Папка или флешка не найдена (возможно, флешку вынули)")
     target = root / filename
     n = 2
     while target.exists():

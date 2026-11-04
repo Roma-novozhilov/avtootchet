@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .paths import app_dir
 
-SECRET_FIELDS = {"secret", "password"}
+SECRET_FIELDS = {"secret", "password", "report_password"}
 
 
 # ------------------------------------------------------------------ DPAPI

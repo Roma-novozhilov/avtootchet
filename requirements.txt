@@ -4,3 +4,4 @@ cryptography>=42
 pywin32>=306; sys_platform == "win32"
 truststore>=0.9
 certifi>=2024.2
+msoffcrypto-tool>=5.4
