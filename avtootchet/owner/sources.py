@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 from pathlib import Path
 
+from ..common.comdate import com_datetime, inline_dates
 from ..common.models import IN, OUT, CashOp, OneCData, norm_number
 
 
@@ -141,8 +142,8 @@ def registered_connector_path() -> str:
 
 
 def _com_datetime(v) -> datetime:
-    """pywintypes.datetime -> обычный datetime."""
-    return datetime(v.year, v.month, v.day, v.hour, v.minute, v.second)
+    """pywintypes.datetime -> обычный datetime в местном времени (см. common/comdate.py)."""
+    return com_datetime(v)
 
 
 class ComSource(DataSource):
@@ -223,8 +224,8 @@ class ComSource(DataSource):
 
     def _query(self, conn, text: str, **params):
         q = conn.NewObject("Запрос")
-        q.Text = text
-        for k, v in params.items():
+        q.Text, rest = inline_dates(text, params)
+        for k, v in rest.items():
             q.SetParameter(k, v)
         if self.cashboxes:
             arr = conn.NewObject("Массив")

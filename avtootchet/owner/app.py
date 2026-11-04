@@ -465,6 +465,9 @@ class OwnerWindow(QMainWindow):
             recon = data.reconciliation
             bad = sum(1 for r in recon if not r.ok)
             warn += f" · сверка с 1С: НЕ СХОДИТСЯ ({bad})" if bad else " · сверка с 1С: сходится"
+            failed = getattr(data.analytics, "errors", None) or {}
+            if failed:
+                warn += f" · не построено разделов: {len(failed)} ({', '.join(failed)})"
             self.dot_rev.set("red" if bad else ("yellow" if data.notes else "green"))
             self.lbl_rev.setText(f"Выручка {d1:%d.%m.%Y}–{d2:%d.%m.%Y}: оплат {len(rev)}, "
                                  f"{money(sum(p.amount for p in rev))}{warn}")

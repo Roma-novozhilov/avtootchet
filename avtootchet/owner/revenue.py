@@ -20,6 +20,8 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from ..common.comdate import com_datetime, inline_dates
+
 SERVICE, METAL = "Сервис", "Металлообработка"
 TERMINAL, QR, CASH, CASH_NC = "Терминал", "QR код", "Наличные (чек)", "Наличные (без чека)"
 METHODS = (TERMINAL, QR, CASH, CASH_NC)
@@ -87,6 +89,7 @@ class RevenueData:
     rko_totals: dict = field(default_factory=dict)   # (день, касса) -> сумма всех РКО
     expenses: list["Expense"] = field(default_factory=list)
     main_suppliers: list[str] = field(default_factory=list)
+    analytics: object = None          # analytics.Analytics
     loaded_at: datetime = field(default_factory=datetime.now)
 
     @property
@@ -485,8 +488,7 @@ Q_BALANCES = """ВЫБРАТЬ
 
 
 def _dt(v) -> datetime:
-    return datetime(v.year, v.month, v.day, getattr(v, "hour", 0), getattr(v, "minute", 0),
-                    getattr(v, "second", 0))
+    return com_datetime(v)
 
 
 def _str(v) -> str:
@@ -508,10 +510,8 @@ def load_revenue(conn, d1: date, d2: date, oil_groups: list[str] | None = None,
 
     def run(text: str, cols: tuple[str, ...], **extra):
         q = conn.NewObject("Запрос")
-        q.Text = text
-        q.SetParameter("Начало", start)
-        q.SetParameter("Конец", end)
-        for k, v in extra.items():
+        q.Text, rest = inline_dates(text, {"Начало": start, "Конец": end, **extra})
+        for k, v in rest.items():
             q.SetParameter(k, v)
         sel = q.Execute().Choose()
         rows = []
@@ -565,4 +565,9 @@ def load_revenue(conn, d1: date, d2: date, oil_groups: list[str] | None = None,
                         _str(r["Основание"]), _num(r["Сумма"]), _str(r["Комментарий"]),
                         _str(r["Назначение"]))
                 for r in run(Q_EXPENSES, exp_cols)]
-    return RevenueData(d1, d2, payments, transfers, balances, rko, expenses, list(main_suppliers or []))
+    from .analytics import load_analytics  # noqa: PLC0415
+    analytics = load_analytics(conn, d1, d2, payments, transfers, run)
+    expenses += analytics.commissions          # комиссия банка за эквайринг/СБП - тоже расход
+    expenses.sort(key=lambda e: e.dt)
+    return RevenueData(d1, d2, payments, transfers, balances, rko, expenses, list(main_suppliers or []),
+                       analytics)
