@@ -156,8 +156,10 @@ class ComSource(DataSource):
     name = "1С:Далион (COM)"
 
     def __init__(self, server: str, base: str, user: str, password: str,
-                 cashboxes: str = "", organization: str = "", platform: str = ""):
+                 cashboxes: str = "", organization: str = "", platform: str = "",
+                 oil_groups: str = "Масло"):
         self.server, self.base, self.user, self.password = server, base, user, password
+        self.oil_groups = [g.strip() for g in (oil_groups or "Масло").split(",") if g.strip()]
         self.platform = platform.strip()   # версия платформы, на которой работает база
         self.cashboxes = [c.strip() for c in cashboxes.split(",") if c.strip()]
         self.organization = organization.strip()
@@ -245,6 +247,16 @@ class ComSource(DataSource):
             out.append((str(getattr(sel, "Касса")), str(getattr(sel, "Организация"))))
         return out
 
+    def load_revenue(self, d1: date, d2: date):
+        """Выручка за период (оплаты, перемещения, остатки) - см. revenue.py."""
+        from .revenue import load_revenue  # noqa: PLC0415
+        self._check_settings()
+        conn = self._connect()
+        try:
+            return load_revenue(conn, d1, d2, self.oil_groups)
+        except Exception as e:  # noqa: BLE001
+            raise SourceError(f"Ошибка запроса к 1С: {e}") from None
+
     def _check_settings(self):
         if not (self.server and self.user):
             raise SourceError("Заполните в настройках путь к базе (или сервер 1С) и пользователя")
@@ -283,5 +295,6 @@ def make_source(settings) -> DataSource:
     if settings["source"] == "com":
         c = settings["com"]
         return ComSource(c["server"], c["base"], c["user"], c["password"],
-                         c.get("cashboxes", ""), c.get("organization", ""), c.get("platform", ""))
+                         c.get("cashboxes", ""), c.get("organization", ""), c.get("platform", ""),
+                         c.get("oil_groups", "Масло"))
     return DemoSource(settings["demo_file"])

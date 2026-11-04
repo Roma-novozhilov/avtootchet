@@ -31,13 +31,15 @@ from .drives import in_remote_session, removable_drives, write_to_drive
 from .reconcile import ERROR, CheckResult, reconcile
 from .report import build_report, report_filename
 from .settings_dialog import OwnerSettingsDialog
-from .sources import SourceError, make_source
+from .revenue_report import build_revenue_report, revenue_filename
+from .sources import ComSource, SourceError, make_source
 
 DEFAULTS = {
     "source": "demo",
     "demo_file": str(resource("demo/export.json")),
     "com": {"server": "", "base": "", "user": "", "password": "",
-            "cashboxes": "", "organization": "", "platform": "8.3.27.2325"},
+            "cashboxes": "", "organization": "", "platform": "8.3.27.2325",
+            "oil_groups": "Масло"},
     "port": DEFAULT_PORT,
     "secret": "",
 }
@@ -52,6 +54,8 @@ class Session:
         self.book_raw: bytearray | None = None
         self.result: CheckResult | None = None
         self.report: bytearray | None = None
+        self.revenue = None                       # RevenueData
+        self.revenue_report: bytearray | None = None
 
     def clear_check(self):
         wipe(self.report)
@@ -59,12 +63,14 @@ class Session:
 
     def clear(self):
         wipe(self.book_raw)
+        wipe(self.revenue_report)
         self.clear_check()
         self.onec = self.book = self.book_raw = None
+        self.revenue = self.revenue_report = None
 
     @property
     def has_data(self) -> bool:
-        return any((self.onec, self.book, self.result))
+        return any((self.onec, self.book, self.result, self.revenue))
 
 
 class _Inbox(QObject):
@@ -165,6 +171,20 @@ class OwnerWindow(QMainWindow):
         r2.addWidget(self.lbl_book, 1)
         r2.addWidget(self.btn_open_book)
         grid.addLayout(r2)
+        r3 = QHBoxLayout()
+        self.dot_rev = StatusDot()
+        self.lbl_rev = QLabel("Отчёт по выручке: строится из 1С за выбранный период")
+        self.lbl_rev.setWordWrap(True)
+        self.btn_revenue = QPushButton("Отчёт по выручке")
+        self.btn_revenue.setObjectName("primary")
+        self.btn_revenue.setMinimumWidth(190)
+        self.btn_revenue.setToolTip("Забрать оплаты из 1С, построить лист выручки, показать его "
+                                    "в Excel для проверки и сгрузить на флешку")
+        self.btn_revenue.clicked.connect(self.revenue_report)
+        r3.addWidget(self.dot_rev)
+        r3.addWidget(self.lbl_rev, 1)
+        r3.addWidget(self.btn_revenue)
+        grid.addLayout(r3)
         self.lbl_net = QLabel()
         self.lbl_net.setObjectName("hint")
         grid.addWidget(self.lbl_net)
@@ -392,6 +412,78 @@ class OwnerWindow(QMainWindow):
             self._refresh_state()
 
         run_in_background(lambda: source.load(d1, d2), done)
+
+    def revenue_report(self):
+        d1, d2 = self.period()
+        if d1 > d2:
+            error_box(self, "Период", "Дата начала больше даты окончания.")
+            return
+        source = make_source(self.settings)
+        if not isinstance(source, ComSource):
+            error_box(self, "Отчёт по выручке", "Отчёт по выручке строится только из 1С:Далион: "
+                      "в «Настройках» выберите источник «1С:Далион через COM».")
+            return
+        if not self.drives.currentData():
+            error_box(self, "Флешка", "Вставьте флешку и выберите её в списке «Флешка» внизу окна: "
+                      "после проверки отчёт запишется на неё.")
+            return
+        self.btn_revenue.setEnabled(False)
+        self.btn_revenue.setText("Строю…")
+        self.dot_rev.set("blue")
+        self.lbl_rev.setText(f"Выручка: получаю данные 1С за {d1:%d.%m.%Y}–{d2:%d.%m.%Y}…")
+
+        def work():
+            data = source.load_revenue(d1, d2)
+            return data, build_revenue_report(data)
+
+        def done(result, err):
+            self.btn_revenue.setEnabled(True)
+            self.btn_revenue.setText("Отчёт по выручке")
+            if err:
+                self.dot_rev.set("red")
+                self.lbl_rev.setText(f"Выручка: ошибка — {err}")
+                self._log("Ошибка отчёта по выручке", type(err).__name__)
+                if not isinstance(err, SourceError):
+                    error_box(self, "1С", f"Не удалось построить отчёт: {err}")
+                return
+            data, xlsx = result
+            wipe(self.session.revenue_report)
+            self.session.revenue, self.session.revenue_report = data, bytearray(xlsx)
+            rev = data.revenue
+            warn = f" · замечаний: {len(data.notes)}" if data.notes else ""
+            self.dot_rev.set("yellow" if data.notes else "green")
+            self.lbl_rev.setText(f"Выручка {d1:%d.%m.%Y}–{d2:%d.%m.%Y}: оплат {len(rev)}, "
+                                 f"{money(sum(p.amount for p in rev))}{warn}")
+            self._log("Построен отчёт по выручке",
+                      f"период {d1:%d.%m.%Y}–{d2:%d.%m.%Y}, оплат: {len(rev)}")
+            self._refresh_state()
+            self._export_revenue()
+
+        run_in_background(work, done)
+
+    def _export_revenue(self):
+        s = self.session
+        root = self.drives.currentData()
+        if not (s.revenue and s.revenue_report):
+            return
+        name = revenue_filename(s.revenue)
+        self._log("Отчёт по выручке открыт для проверки")
+        if not preview.confirm_with_preview(self, bytes(s.revenue_report), name, "сгрузить на флешку"):
+            self._log("Отправка отменена владельцем")
+            return
+        if not root:
+            error_box(self, "Флешка", "Флешка не выбрана — отчёт не записан. Выберите её и нажмите "
+                      "«Отчёт по выручке» ещё раз.")
+            return
+        try:
+            target = write_to_drive(root, name, bytes(s.revenue_report))
+        except OSError as e:
+            error_box(self, "Флешка", f"Не удалось записать отчёт: {e}")
+            return
+        self._log("Отчёт по выручке сгружен на флешку", f"{root} {target.name}")
+        QMessageBox.information(self, "Готово", f"Отчёт записан на флешку:\n{target}\n\n"
+                                "Когда закончите, нажмите «Удалить отчётность», чтобы стереть "
+                                "данные с этого ПК.")
 
     def open_book_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Кассовая книга бухгалтера", "",
