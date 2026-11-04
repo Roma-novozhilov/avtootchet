@@ -177,6 +177,7 @@ class ComSource(DataSource):
         try:
             import pythoncom  # noqa: PLC0415 - есть только на Windows
             import win32com.client  # noqa: PLC0415
+            import win32timezone  # noqa: F401, PLC0415 - нужен pywin32 для дат из 1С; явный импорт, чтобы попал в .exe
         except ImportError:
             raise SourceError("COM доступен только в Windows (нужен пакет pywin32)") from None
         if self.platform:
