@@ -11,6 +11,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta
 from typing import Callable
 
+from ..common.comdate import inline_dates
 from .sources import ComSource, SourceError
 
 PERIOD = """ГДЕ
@@ -168,9 +169,7 @@ class Probe:
         start = datetime(self.d1.year, self.d1.month, self.d1.day)
         end = datetime(self.d2.year, self.d2.month, self.d2.day, 23, 59, 59)
         q = self.conn.NewObject("Запрос")
-        q.Text = text
-        q.SetParameter("Начало", start)
-        q.SetParameter("Конец", end)
+        q.Text, _ = inline_dates(text, {"Начало": start, "Конец": end})
         sel = q.Execute().Choose()
         out = []
         while sel.Next():
