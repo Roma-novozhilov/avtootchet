@@ -5,6 +5,9 @@
 программы: правки, сделанные в Excel, в отправку не попадают (копия открывается
 только для чтения). Временная копия стирается сразу после решения, а если Excel
 её ещё держит - при закрытии программы или при следующем запуске.
+
+Программа владельца показывает уже ЗАШИФРОВАННЫЙ отчёт (encrypted=True): Excel спрашивает
+пароль, а «Сохранить как» сохраняет файл тоже с паролем - незашифрованной копии не бывает.
 """
 from __future__ import annotations
 
@@ -81,7 +84,8 @@ def cleanup() -> int:
 
 
 class PreviewDialog(QDialog):
-    def __init__(self, preview: PreviewFile, action: str, parent: QWidget | None = None):
+    def __init__(self, preview: PreviewFile, action: str, parent: QWidget | None = None,
+                 encrypted: bool = False):
         super().__init__(parent)
         self.preview = preview
         self.setWindowTitle("Проверка перед отправкой")
@@ -92,7 +96,9 @@ class PreviewDialog(QDialog):
             f"<b>Отчёт открыт в Excel.</b><br><br>Проверьте, что всё построено верно, и выберите, "
             f"что сделать: <b>{action}</b> или не отправлять.<br><br>"
             "Будет отправлен отчёт в том виде, как его построила программа: правки в Excel "
-            "в отправку не попадут.")
+            "в отправку не попадут."
+            + ("<br><br>Файл уже зашифрован: Excel спросит <b>пароль для отчётов</b>. Копия через "
+               "«Сохранить как» тоже будет с паролем." if encrypted else ""))
         text.setWordWrap(True)
         lay.addWidget(text)
         self.status = QLabel("")
@@ -119,16 +125,17 @@ class PreviewDialog(QDialog):
         self.status.setText(err or "")
 
 
-def _ask(parent: QWidget | None, preview: PreviewFile, action: str) -> bool:
-    return PreviewDialog(preview, action, parent).exec() == QDialog.Accepted
+def _ask(parent: QWidget | None, preview: PreviewFile, action: str, encrypted: bool = False) -> bool:
+    return PreviewDialog(preview, action, parent, encrypted).exec() == QDialog.Accepted
 
 
 def confirm_with_preview(parent: QWidget | None, data: bytes, filename: str,
-                         action: str = "отправить") -> bool:
-    """Показать отчёт в Excel и спросить владельца. True = «Отправить»."""
+                         action: str = "отправить", encrypted: bool = False) -> bool:
+    """Показать отчёт в Excel и спросить владельца. True = «Отправить».
+    encrypted - data уже зашифрован (так показывает программа владельца)."""
     pf = PreviewFile(data, filename)
     try:
-        decision = _ask(parent, pf, action)
+        decision = _ask(parent, pf, action, encrypted)
     finally:
         while not pf.remove():
             ans = QMessageBox.question(
