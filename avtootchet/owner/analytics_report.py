@@ -11,6 +11,7 @@ from openpyxl.styles import Font
 from openpyxl.worksheet.worksheet import Worksheet
 
 from .analytics import Analytics, compare_periods, monthly, period_sum
+from .report_layout import DEBT_COLUMNS, enabled_columns, select
 from .revenue import METAL, REFUND_GROUP, SERVICE, RevenueData
 from .revenue_report import F_DAY, F_SUB, F_TITLE, FB, FILL_ERR, FONT, _table
 
@@ -209,15 +210,11 @@ def sheet_debts(wb: Workbook, data: RevenueData) -> None:
     debts = sorted(a.debts, key=lambda d: -d.debt)
     rows = [[d.dt.date(), d.number, d.client, d.car, d.plate, d.status, d.order_type, d.organization, d.master,
              d.amount, d.paid, d.refunded, d.bonuses, d.debt, (today - d.dt.date()).days] for d in debts]
-    end = _table(ws, row, ["Дата ЗН", "№", "Клиент", "Автомобиль", "Госномер", "Статус", "Тип ЗН",
-                           "Организация", "Мастер", "Сумма ЗН", "Оплачено", "Возвращено", "Бонусами", "Долг",
-                           "Дней"], rows, money_from=10,
-                 widths=[11, 13, 28, 22, 11, 16, 13, 20, 20, 14, 14, 13, 12, 14, 7], total=True)
-    # «Дней» - не деньги: убрать формат и итог
-    for r in range(row + 1, end - 1):
-        ws.cell(r, 15).number_format = "0"
-    ws.cell(end - 2, 15).value = None
-    ws.freeze_panes = ws.cell(row + 1, 4)
+    headers, rows, widths = select(DEBT_COLUMNS, rows, [11, 13, 28, 22, 11, 16, 13, 20, 20, 14, 14, 13, 12, 14, 7],
+                                   enabled_columns(data.layout, "Долги клиентов"))
+    _table(ws, row, headers, rows, widths=widths, total=True,
+           money={"Сумма ЗН", "Оплачено", "Возвращено", "Бонусами", "Долг"})
+    ws.freeze_panes = ws.cell(row + 1, min(4, len(headers)))
 
 
 # ------------------------------------------------------------------ механики

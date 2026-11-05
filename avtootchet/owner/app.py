@@ -45,6 +45,7 @@ DEFAULTS = {
     "port": DEFAULT_PORT,
     "secret": "",
     "report_password": "",
+    "report_layout": {},    # состав отчёта по выручке: листы и колонки (report_layout.py)
     "folders": [],          # папки, выбранные для сохранения отчётов (последние сверху)
     "last_target": "",
 }
@@ -189,6 +190,10 @@ class OwnerWindow(QMainWindow):
         self.btn_revenue.clicked.connect(self.revenue_report)
         r3.addWidget(self.dot_rev)
         r3.addWidget(self.lbl_rev, 1)
+        self.btn_layout = QPushButton("Состав отчёта…")
+        self.btn_layout.setToolTip("Какие листы и колонки войдут в отчёт по выручке и в каком порядке")
+        self.btn_layout.clicked.connect(self.open_layout)
+        r3.addWidget(self.btn_layout)
         r3.addWidget(self.btn_revenue)
         grid.addLayout(r3)
         self.lbl_net = QLabel()
@@ -443,9 +448,11 @@ class OwnerWindow(QMainWindow):
         self.dot_rev.set("blue")
         self.lbl_rev.setText(f"Выручка: получаю данные 1С за {d1:%d.%m.%Y}–{d2:%d.%m.%Y}…")
 
+        layout = self.settings["report_layout"]
+
         def work():
             data = source.load_revenue(d1, d2)
-            return data, build_revenue_report(data)
+            return data, build_revenue_report(data, layout)
 
         def done(result, err):
             self.btn_revenue.setEnabled(True)
@@ -477,6 +484,12 @@ class OwnerWindow(QMainWindow):
             self._export_revenue()
 
         run_in_background(work, done)
+
+    def open_layout(self):
+        from .layout_dialog import ReportLayoutDialog  # noqa: PLC0415
+        if ReportLayoutDialog(self.settings, self).exec():
+            n = len([1 for _, on in self.settings["report_layout"]["sheets"] if on])
+            self._log("Изменён состав отчёта", f"листов: {n}")
 
     def _export_revenue(self):
         s = self.session
