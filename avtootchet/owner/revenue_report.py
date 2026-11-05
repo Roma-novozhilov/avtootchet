@@ -26,6 +26,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from .report_layout import (EXPENSE_COLUMNS, PAYMENT_COLUMNS, TRANSFER_COLUMNS, enabled_columns,
+                            enabled_sheets, select)
 from .revenue import (DIRECTIONS, METAL, METHODS, REFUND_GROUP, SERVICE, Expense, Payment,
                       RevenueData, supplier_matches)
 
@@ -159,8 +161,10 @@ def _sheet_days(wb: Workbook, data: RevenueData):
 
 
 # ------------------------------------------------------------------ 2. итоги
-def _table(ws: Worksheet, row: int, headers: list[str], rows: list[list], money_from: int,
-           widths: list[int] | None = None, total: bool = False) -> int:
+def _table(ws: Worksheet, row: int, headers: list[str], rows: list[list], money_from: int = 0,
+           widths: list[int] | None = None, total: bool = False, money: set[str] | None = None) -> int:
+    """money - названия денежных колонок (вместо money_from, когда колонки выбирает владелец)."""
+    money_idx = {i for i, h in enumerate(headers, start=1) if h in money} if money is not None else None
     for i, h in enumerate(headers, start=1):
         _cell(ws, row, i, h, font=F_HEAD, fill=FILL_HEAD, align=WRAP)
         if widths:
@@ -170,7 +174,8 @@ def _table(ws: Worksheet, row: int, headers: list[str], rows: list[list], money_
     for r in rows:
         row += 1
         for i, v in enumerate(r, start=1):
-            is_money = i >= money_from and isinstance(v, (int, float)) and not isinstance(v, bool)
+            in_money = (i in money_idx) if money_idx is not None else i >= money_from
+            is_money = in_money and isinstance(v, (int, float)) and not isinstance(v, bool)
             fmt = MONEY if is_money else (DATE if isinstance(v, date) else None)
             _cell(ws, row, i, v, fmt=fmt)
             if is_money:
@@ -380,9 +385,8 @@ def _sheet_expense_suppliers(wb: Workbook, data: RevenueData):
     ws.column_dimensions["G"].width = 8
 
 
-EXP_HEADERS = ["Дата", "Время", "№", "Касса / счёт", "Источник", "Организация", "Подразделение",
-               "Вид операции", "Контрагент", "Статья затрат", "Вид движения ДС", "Группа в отчёте",
-               "Основание", "Сумма", "Комментарий", "Назначение платежа"]
+EXP_HEADERS = EXPENSE_COLUMNS
+EXP_WIDTHS = [11, 7, 13, 24, 9, 20, 16, 18, 30, 24, 24, 28, 20, 14, 30, 40]
 
 
 def _sheet_expense_detail(wb: Workbook, data: RevenueData):
@@ -392,17 +396,16 @@ def _sheet_expense_detail(wb: Workbook, data: RevenueData):
     rows = [[e.dt.date(), e.dt.strftime("%H:%M"), e.number, e.account, e.source, e.organization,
              e.division, e.operation, e.counterparty, e.article, e.movement, e.group, e.basis, e.amount,
              e.comment, e.purpose] for e in data.expenses]
-    end = _table(ws, 3, EXP_HEADERS, rows, money_from=14,
-                 widths=[11, 7, 13, 24, 9, 20, 16, 18, 30, 24, 24, 28, 20, 14, 30, 40], total=True)
-    ws.freeze_panes = "D4"
-    ws.auto_filter.ref = f"A3:{get_column_letter(len(EXP_HEADERS))}{max(3, end - 3)}"
+    headers, rows, widths = select(EXP_HEADERS, rows, EXP_WIDTHS,
+                                   enabled_columns(data.layout, "Расходы подробно"))
+    end = _table(ws, 3, headers, rows, widths=widths, total=True, money={"Сумма"})
+    ws.freeze_panes = "D4" if len(headers) > 3 else "A4"
+    ws.auto_filter.ref = f"A3:{get_column_letter(len(headers))}{max(3, end - 3)}"
 
 
 # ------------------------------------------------------------------ 3-7
-DETAIL_HEADERS = ["Дата", "Время", "Документ", "№", "Касса", "Организация", "Направление",
-                  "Способ оплаты", "Подразделение", "Основание", "Тип ЗН", "Клиент", "Автомобиль",
-                  "Госномер", "Мастер-приёмщик", "Итого", "Работы", "Запчасти", "Продажа запчастей",
-                  "Продажа масла", "Замечание"]
+DETAIL_HEADERS = PAYMENT_COLUMNS
+DETAIL_MONEY = {"Итого", "Работы", "Запчасти", "Продажа запчастей", "Продажа масла"}
 DETAIL_WIDTHS = [11, 7, 9, 13, 20, 20, 15, 16, 16, 18, 13, 26, 22, 11, 20, 13, 13, 13, 13, 13, 40]
 
 
@@ -414,17 +417,21 @@ def _detail_row(p: Payment) -> list:
             "; ".join(p.notes)]
 
 
-def _sheet_detail(wb: Workbook, name: str, title: str, pays: list[Payment], total: bool = True):
+def _sheet_detail(wb: Workbook, name: str, title: str, pays: list[Payment], total: bool = True,
+                  layout: dict | None = None):
     ws = wb.create_sheet(name)
     ws["A1"] = title
     ws["A1"].font = F_TITLE
-    end = _table(ws, 3, DETAIL_HEADERS, [_detail_row(p) for p in pays], money_from=16,
-                 widths=DETAIL_WIDTHS, total=total)
-    for r in range(4, end):
-        if ws.cell(r, len(DETAIL_HEADERS)).value:
-            ws.cell(r, len(DETAIL_HEADERS)).fill = FILL_WARN
-    ws.freeze_panes = "E4"
-    ws.auto_filter.ref = f"A3:{get_column_letter(len(DETAIL_HEADERS))}{max(3, end - 3)}"
+    headers, rows, widths = select(DETAIL_HEADERS, [_detail_row(p) for p in pays], DETAIL_WIDTHS,
+                                   enabled_columns(layout, name))
+    end = _table(ws, 3, headers, rows, widths=widths, total=total, money=DETAIL_MONEY)
+    if "Замечание" in headers:
+        col = headers.index("Замечание") + 1
+        for r in range(4, end):
+            if ws.cell(r, col).value:
+                ws.cell(r, col).fill = FILL_WARN
+    ws.freeze_panes = "E4" if len(headers) > 4 else "A4"
+    ws.auto_filter.ref = f"A3:{get_column_letter(len(headers))}{max(3, end - 3)}"
 
 
 def _sheet_transfers(wb: Workbook, data: RevenueData):
@@ -433,8 +440,9 @@ def _sheet_transfers(wb: Workbook, data: RevenueData):
     ws["A1"].font = F_TITLE
     rows = [[t.dt.date(), t.dt.strftime("%H:%M"), t.number, t.source, t.target, t.amount_out,
              t.amount_in, t.comment] for t in data.transfers]
-    _table(ws, 3, ["Дата", "Время", "№", "Откуда", "Куда", "Списано", "Зачислено", "Комментарий"],
-           rows, money_from=6, widths=[11, 7, 13, 24, 24, 14, 14, 40], total=True)
+    headers, rows, widths = select(TRANSFER_COLUMNS, rows, [11, 7, 13, 24, 24, 14, 14, 40],
+                                   enabled_columns(data.layout, "Перемещения ДС"))
+    _table(ws, 3, headers, rows, widths=widths, total=True, money={"Списано", "Зачислено"})
 
 
 def _sheet_balances(wb: Workbook, data: RevenueData):
@@ -459,12 +467,15 @@ def _reorder(wb: Workbook, order: list[str]) -> None:
     wb.active = 0
 
 
-def build_revenue_report(data: RevenueData) -> bytes:
+def build_revenue_report(data: RevenueData, layout: dict | None = None) -> bytes:
+    """layout - состав отчёта из настроек (report_layout.py); None - все листы и колонки."""
+    if layout is not None:
+        data.layout = layout
     wb = Workbook()
     _sheet_days(wb, data)
     _sheet_totals(wb, data)
     _sheet_recon(wb, data)
-    _sheet_detail(wb, "Оплаты подробно", "Все оплаты, вошедшие в выручку", data.revenue)
+    _sheet_detail(wb, "Оплаты подробно", "Все оплаты, вошедшие в выручку", data.revenue, layout=data.layout)
     _sheet_expense_articles(wb, data)
     _sheet_expense_suppliers(wb, data)
     _sheet_expense_detail(wb, data)
@@ -472,12 +483,19 @@ def build_revenue_report(data: RevenueData) -> bytes:
     _sheet_balances(wb, data)
     if data.other:
         _sheet_detail(wb, "Прочие поступления",
-                      "Поступления без заказ-наряда и накладной (не выручка)", data.other)
+                      "Поступления без заказ-наряда и накладной (не выручка)", data.other, layout=data.layout)
     if data.notes:
-        _sheet_detail(wb, "Замечания", "Оплаты, на которые стоит посмотреть", data.notes, total=False)
+        _sheet_detail(wb, "Замечания", "Оплаты, на которые стоит посмотреть", data.notes, total=False,
+                      layout=data.layout)
     from .analytics_report import add_analytics_sheets  # noqa: PLC0415 - модуль использует этот
     add_analytics_sheets(wb, data)
-    _reorder(wb, SHEET_ORDER)
+    wanted = enabled_sheets(data.layout) or SHEET_ORDER[:1]
+    for ws in list(wb.worksheets):
+        if ws.title not in wanted:
+            wb.remove(ws)
+    if not wb.worksheets:                      # выбранных листов за период нет - пустой лист
+        wb.create_sheet(wanted[0])["A1"] = "За период нет данных для выбранных листов."
+    _reorder(wb, wanted)
     for ws in wb.worksheets:
         ws.sheet_view.zoomScale = 90
         ws.page_setup.orientation = "landscape"

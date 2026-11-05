@@ -90,6 +90,7 @@ class RevenueData:
     expenses: list["Expense"] = field(default_factory=list)
     main_suppliers: list[str] = field(default_factory=list)
     analytics: object = None          # analytics.Analytics
+    layout: dict | None = None        # состав отчёта (report_layout.py), задаётся перед построением
     loaded_at: datetime = field(default_factory=datetime.now)
 
     @property
