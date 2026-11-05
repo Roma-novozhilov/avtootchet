@@ -113,9 +113,13 @@ from avtootchet.common import preview  # noqa: E402
 seen = {}
 
 
-def fake_ask(parent, pf, action):
+def fake_ask(parent, pf, action, encrypted=False):
+    from avtootchet.common.xlsx_crypto import decrypt_xlsx, is_encrypted
     seen["file"] = pf.path
-    assert pf.path.read_bytes() == bytes(owner.session.report), "в Excel должен открыться тот же отчёт"
+    shown = pf.path.read_bytes()
+    assert encrypted and is_encrypted(shown), "для проверки открывается уже зашифрованный отчёт"
+    assert decrypt_xlsx(shown, PASSWORD) == bytes(owner.session.report), "в Excel - тот же отчёт"
+    seen["shown"] = shown
     return seen["answer"]
 
 
@@ -143,6 +147,7 @@ from avtootchet.common.xlsx_crypto import decrypt_xlsx, is_encrypted  # noqa: E4
 saved = files[0].read_bytes()
 assert is_encrypted(saved), "отчёт на флешке должен быть зашифрован"
 assert decrypt_xlsx(saved, PASSWORD) == bytes(owner.session.report), "пароль должен открывать отчёт"
+assert saved == seen["shown"], "записан ровно тот файл, который владелец проверял"
 
 # --- удаление
 owner.delete_all(ask=False)

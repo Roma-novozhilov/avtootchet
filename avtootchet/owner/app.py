@@ -495,24 +495,29 @@ class OwnerWindow(QMainWindow):
         s = self.session
         if not (s.revenue and s.revenue_report):
             return
-        name = revenue_filename(s.revenue)
-        self._log("Отчёт по выручке открыт для проверки")
-        if not preview.confirm_with_preview(self, bytes(s.revenue_report), name, "сохранить отчёт"):
-            self._log("Отправка отменена владельцем")
-            return
-        self._save_report(bytes(s.revenue_report), name, "Отчёт по выручке")
+        self._review_and_save(bytes(s.revenue_report), revenue_filename(s.revenue), "Отчёт по выручке")
 
-    def _save_report(self, data: bytes, name: str, what: str) -> bool:
-        """Зашифровать паролем из настроек и записать на выбранную флешку или в папку."""
-        root = self._target()
-        if not root:
-            error_box(self, "Куда сохранить", "Не выбрано, куда сохранить отчёт — он не записан. "
-                      "Выберите флешку или папку и повторите.")
-            return False
+    def _review_and_save(self, data: bytes, name: str, what: str) -> bool:
+        """Зашифровать отчёт, показать владельцу ЭТОТ ЖЕ зашифрованный файл и после «Отправить»
+        записать его. Незашифрованный отчёт на диск не попадает: ни в папку назначения, ни во
+        временную копию для проверки - поэтому «Сохранить как» из Excel тоже даёт файл с паролем."""
         try:
             enc = encrypt_xlsx(data, self.settings["report_password"])
         except ReportPasswordError as e:
             error_box(self, "Пароль для отчётов", str(e))
+            return False
+        self._log(f"{what} открыт для проверки")
+        if not preview.confirm_with_preview(self, enc, name, "сохранить отчёт", encrypted=True):
+            self._log("Отправка отменена владельцем")
+            return False
+        return self._save_report(enc, name, what)
+
+    def _save_report(self, enc: bytes, name: str, what: str) -> bool:
+        """Записать уже зашифрованный отчёт на выбранную флешку или в папку."""
+        root = self._target()
+        if not root:
+            error_box(self, "Куда сохранить", "Не выбрано, куда сохранить отчёт — он не записан. "
+                      "Выберите флешку или папку и повторите.")
             return False
         try:
             target = write_to_drive(root, name, enc)
@@ -659,12 +664,7 @@ class OwnerWindow(QMainWindow):
         except ReportPasswordError as e:
             error_box(self, "Пароль для отчётов", str(e))
             return
-        name = report_filename(s.result)
-        self._log("Отчёт открыт для проверки")
-        if not preview.confirm_with_preview(self, bytes(s.report), name, "сохранить отчёт"):
-            self._log("Отправка отменена владельцем")
-            return
-        self._save_report(bytes(s.report), name, "Отчёт проверки")
+        self._review_and_save(bytes(s.report), report_filename(s.result), "Отчёт проверки")
 
     def delete_all(self, ask: bool = True):
         if ask and QMessageBox.question(
