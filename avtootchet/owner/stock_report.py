@@ -76,6 +76,8 @@ def build_stock_report(data: StockData) -> bytes:
     total = f"{data.total:,.2f}".replace(",", " ")
     sub = (f"На {data.on:%d.%m.%Y} · лежат {n} дней и больше · позиций {len(data.stale)} · "
            f"сумма по ценам прихода {total} ₽.{excl}")
+    excl += (f" Артикул: реквизит «{data.article_field}»." if data.article_field
+             else " Артикул: реквизит в номенклатуре не найден.")
     _sheet_rows(wb, "Залежавшиеся", f"Запчасти на складе больше {n} дней", sub, data.stale)
     _sheet_rows(wb, "Под заказ-наряды", "Пришли под заказ-наряд и лежат на складе",
                 "Заказаны под конкретную машину, но не установлены и не проданы.", data.ordered, extra=True)

@@ -125,6 +125,9 @@ class OwnerSettingsDialog(QDialog):
         self.stock_exclude = QLineEdit(st.get("exclude", ""))
         self.stock_exclude.setPlaceholderText("слова через запятую: Масло, Фильтр")
         f.addRow("Не учитывать группы:", self.stock_exclude)
+        self.stock_article = QLineEdit(st.get("article", ""))
+        self.stock_article.setPlaceholderText("пусто — найти автоматически")
+        f.addRow("Реквизит артикула:", self.stock_article)
         self.stock_folder = QLineEdit(st.get("folder", ""))
         pick = QPushButton("…")
         pick.setFixedWidth(32)
@@ -270,6 +273,7 @@ class OwnerSettingsDialog(QDialog):
                          "platform": self.platform.text().strip(),
                          "organization": self.organization.text().strip()}
         self.s["stock"] = {"days": self.stock_days.value(), "months": self.stock_months.value(),
+                           "article": self.stock_article.text().strip(),
                            "exclude": self.stock_exclude.text().strip(),
                            "folder": self.stock_folder.text().strip()}
         self.s["port"] = self.port.value()
