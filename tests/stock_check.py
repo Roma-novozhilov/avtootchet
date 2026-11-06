@@ -146,7 +146,7 @@ DATA = {
 }
 
 conn = Conn(DATA)
-data = S.load_stock(conn, TODAY, 14, ["Масло", "Фильтр"])
+data = S.load_stock(conn, TODAY, 14, ["Масло", "Фильтр"], months=0)
 assert data.excluded_groups == ["Масла моторные"] and data.items_in_stock == 4
 got = [(r.name, r.article, r.qty, r.days, r.number, r.price) for r in data.stale]
 assert got == [("Хомут", "", 0.5, None, S.NO_RECEIPT, 100), ("Хомут", "", 2, 300, "Инвентаризация 0001", 100),
@@ -158,6 +158,14 @@ assert rec_q["Номенклатура"] == ["n1", "n2", "n3", "n4"]
 rec_text = [t for t, _ in conn.queries if "ПриходнаяНакладная" in t][0]
 assert "&С" not in rec_text and "ДАТАВРЕМЯ(2000, 1, 1" in rec_text, "дата - литералом, без сдвига"
 assert data.total == 2200 + 50 + 200 + 50
+
+# --- только приходы за 6 месяцев: инвентаризация 300 дней назад и «без прихода» не показываются
+d6 = S.load_stock(Conn(DATA), TODAY, 14, ["Масло"], months=6)
+assert [(r.name, r.days) for r in d6.stale] == [("Хомут", 100), ("Колодки", 20)], d6.stale
+assert d6.older_count == 2 and d6.older_sum == 250
+assert S.months_ago(date(2026, 8, 31), 6) == date(2026, 2, 28)
+sub6 = load_workbook(BytesIO(build_stock_report(d6)))["Залежавшиеся"]["A2"].value
+assert "Приходы за последние 6 мес." in sub6 and "2 поз. на 250.00 ₽" in sub6, sub6
 
 # --- Excel
 wb = load_workbook(BytesIO(build_stock_report(data)))

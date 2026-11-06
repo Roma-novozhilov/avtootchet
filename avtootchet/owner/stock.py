@@ -95,6 +95,9 @@ class StockData:
     issued: list[IssuedRow] = field(default_factory=list)     # выданы в ЗН, ЗН не закрыт
     excluded_groups: list[str] = field(default_factory=list)
     items_in_stock: int = 0
+    months: int = 0                    # 0 - без ограничения; иначе только приходы за N месяцев
+    older_count: int = 0               # не вошло: пришло раньше или прихода нет
+    older_sum: float = 0.0
     loaded_at: datetime = field(default_factory=datetime.now)
 
     @property
@@ -245,7 +248,19 @@ def _num(v) -> float:
         return 0.0
 
 
-def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None = None) -> StockData:
+def months_ago(d: date, months: int) -> date:
+    y, m = divmod(d.year * 12 + d.month - 1 - months, 12)
+    m += 1
+    for day in (d.day, 30, 29, 28):
+        try:
+            return date(y, m, day)
+        except ValueError:
+            continue
+    return date(y, m, 28)
+
+
+def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None = None,
+               months: int = 6) -> StockData:
     """conn - подключение COM к Далиону."""
     def run(text: str, cols: tuple[str, ...], **params):
         q = conn.NewObject("Запрос")
@@ -274,7 +289,8 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
                 pass
         return run(text.format(article='""', excl=cond), cols, **params)
 
-    data = StockData(today, min_days)
+    data = StockData(today, min_days, months=months)
+    cutoff = months_ago(today, months) if months else None
     art = article_field(conn)
 
     # группы-исключения: в названии есть одно из слов
@@ -318,6 +334,10 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
 
     for key, _ref in refs:
         for row in allocate(items[key], by_ref.get(key, []), today, min_days):
+            if cutoff and (row.received is None or row.received < cutoff):
+                data.older_count += 1
+                data.older_sum += row.amount
+                continue
             (data.ordered if row.order else data.stale).append(row)
     data.stale, data.ordered = sort_rows(data.stale), sort_rows(data.ordered)
 

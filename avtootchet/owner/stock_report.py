@@ -69,6 +69,10 @@ def build_stock_report(data: StockData) -> bytes:
     wb.remove(wb.active)
     n = data.min_days
     excl = f" Не учитываются группы: {', '.join(data.excluded_groups)}." if data.excluded_groups else ""
+    if data.months:
+        older = f"{data.older_sum:,.2f}".replace(",", " ")
+        excl = (f" Приходы за последние {data.months} мес.; пришедшее раньше (или без прихода) не показано: "
+                f"{data.older_count} поз. на {older} ₽.") + excl
     total = f"{data.total:,.2f}".replace(",", " ")
     sub = (f"На {data.on:%d.%m.%Y} · лежат {n} дней и больше · позиций {len(data.stale)} · "
            f"сумма по ценам прихода {total} ₽.{excl}")

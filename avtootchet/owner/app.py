@@ -49,7 +49,7 @@ DEFAULTS = {
     "folders": [],          # папки, выбранные для сохранения отчётов (последние сверху)
     "last_target": "",
     # утренний отчёт «Залежавшиеся запчасти» (stock_job.py, запуск с --stock-report)
-    "stock": {"folder": r"F:\Отчёты\Склад", "days": 14, "exclude": "Масло, Фильтр"},
+    "stock": {"folder": r"F:\Отчёты\Склад", "days": 14, "months": 6, "exclude": "Масло, Фильтр"},
 }
 PICK_FOLDER = "::pick-folder::"
 
