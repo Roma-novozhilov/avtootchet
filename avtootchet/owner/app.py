@@ -48,6 +48,8 @@ DEFAULTS = {
     "report_layout": {},    # состав отчёта по выручке: листы и колонки (report_layout.py)
     "folders": [],          # папки, выбранные для сохранения отчётов (последние сверху)
     "last_target": "",
+    # утренний отчёт «Залежавшиеся запчасти» (stock_job.py, запуск с --stock-report)
+    "stock": {"folder": r"F:\Отчёты\Склад", "days": 14, "exclude": "Масло, Фильтр"},
 }
 PICK_FOLDER = "::pick-folder::"
 
@@ -196,6 +198,21 @@ class OwnerWindow(QMainWindow):
         r3.addWidget(self.btn_layout)
         r3.addWidget(self.btn_revenue)
         grid.addLayout(r3)
+        r4 = QHBoxLayout()
+        self.dot_stock = StatusDot()
+        self.lbl_stock = QLabel("Склад: запчасти, которые лежат дольше "
+                                f"{self.settings['stock']['days']} дней после прихода")
+        self.lbl_stock.setWordWrap(True)
+        self.btn_stock = QPushButton("Залежавшиеся запчасти")
+        self.btn_stock.setMinimumWidth(190)
+        self.btn_stock.setToolTip("Остатки склада по приходным накладным: что лежит дольше заданного "
+                                  "числа дней, кто приходовал, поставщик, сумма. Каждое утро этот же "
+                                  "отчёт сам кладётся в папку из «Настроек» (задача Windows).")
+        self.btn_stock.clicked.connect(self.stock_report)
+        r4.addWidget(self.dot_stock)
+        r4.addWidget(self.lbl_stock, 1)
+        r4.addWidget(self.btn_stock)
+        grid.addLayout(r4)
         self.lbl_net = QLabel()
         self.lbl_net.setObjectName("hint")
         grid.addWidget(self.lbl_net)
@@ -484,6 +501,47 @@ class OwnerWindow(QMainWindow):
             self._export_revenue()
 
         run_in_background(work, done)
+
+    def stock_report(self):
+        from .stock_job import build  # noqa: PLC0415
+        from .stock_report import stock_filename  # noqa: PLC0415
+        if not isinstance(make_source(self.settings), ComSource):
+            error_box(self, "Залежавшиеся запчасти", "Отчёт строится только из 1С:Далион: "
+                      "в «Настройках» выберите источник «1С:Далион через COM».")
+            return
+        if not self._target():
+            error_box(self, "Куда сохранить", "Выберите внизу окна, куда сохранить отчёт: флешку "
+                      "или папку («Выбрать папку…»).")
+            return
+        try:
+            check_password(self.settings["report_password"])
+        except ReportPasswordError as e:
+            error_box(self, "Пароль для отчётов", str(e))
+            return
+        self.btn_stock.setEnabled(False)
+        self.btn_stock.setText("Строю…")
+        self.dot_stock.set("blue")
+        self.lbl_stock.setText("Склад: читаю остатки и приходы из 1С…")
+
+        def done(result, err):
+            self.btn_stock.setEnabled(True)
+            self.btn_stock.setText("Залежавшиеся запчасти")
+            if err:
+                self.dot_stock.set("red")
+                self.lbl_stock.setText(f"Склад: ошибка — {err}")
+                self._log("Ошибка отчёта по складу", type(err).__name__)
+                if not isinstance(err, SourceError):
+                    error_box(self, "1С", f"Не удалось построить отчёт: {err}")
+                return
+            data, xlsx = result
+            self.dot_stock.set("yellow" if data.stale else "green")
+            self.lbl_stock.setText(f"Склад на {data.on:%d.%m.%Y}: лежат {data.min_days}+ дней — "
+                                   f"{len(data.stale)} поз. на {money(data.total)}, под заказ — "
+                                   f"{len(data.ordered)}, выдано в ЗН — {len(data.issued)}")
+            self._log("Построен отчёт по складу", f"позиций: {len(data.stale)}")
+            self._review_and_save(xlsx, stock_filename(data), "Отчёт по складу")
+
+        run_in_background(lambda: build(self.settings), done)
 
     def open_layout(self):
         from .layout_dialog import ReportLayoutDialog  # noqa: PLC0415
