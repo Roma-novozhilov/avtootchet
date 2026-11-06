@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from ..common.comdate import com_datetime, inline_dates
 
-LOOKBACK_DAYS = 730          # дальше двух лет приходы не ищем
-NO_RECEIPT = "приход не найден"
+SINCE = datetime(2000, 1, 1)  # приходы ищутся за всё время
+NO_RECEIPT = "прихода в базе нет"
+OTHER_IN = "другой документ"
+# реквизит номенклатуры с артикулом: первый, чьё имя похоже на одно из этих
+ARTICLE_RE = re.compile(r"артикул|каталож|номерпокаталог|оригинальн|партномер|номерпроизвод", re.I)
 
 
 @dataclass
@@ -105,17 +108,19 @@ def allocate(item: StockItem, receipts: list[Receipt], today: date, min_days: in
     остатка, которые лежат min_days дней и больше."""
     out = []
     left = item.qty
-    last_price = 0.0
-    for r in sorted(receipts, key=lambda r: r.dt, reverse=True):
+    ordered = sorted(receipts, key=lambda r: r.dt, reverse=True)
+    # цена для частей без цены (инвентаризация, нет прихода) - последняя цена прихода
+    last_price = next((r.price for r in ordered if r.price > 0), 0.0)
+    for r in ordered:
         if left <= 1e-9:
             break
         take = min(left, r.qty)
         left -= take
-        last_price = last_price or r.price
         days = (today - r.dt.date()).days
         if days >= min_days:
             out.append(StaleRow(item.name, item.article, item.group, round(take, 3), r.dt.date(), days,
-                                r.number, r.supplier, r.author, r.manager, round(r.price, 2), r.order, r.kind))
+                                r.number, r.supplier, r.author, r.manager,
+                                round(r.price if r.price > 0 else last_price, 2), r.order, r.kind))
     if left > 1e-9:
         out.append(StaleRow(item.name, item.article, item.group, round(left, 3), None, None,
                             NO_RECEIPT, "", "", "", round(last_price, 2)))
@@ -154,6 +159,23 @@ Q_STOCK = """ВЫБРАТЬ
 	О.Номенклатура
 ИМЕЮЩИЕ
 	СУММА(О.КоличествоОстаток) > 0"""
+
+Q_OTHER_IN = """ВЫБРАТЬ
+	Р.Номенклатура КАК Ном,
+	Р.Период КАК Дата,
+	ПРЕДСТАВЛЕНИЕ(Р.Регистратор) КАК Док,
+	Р.Количество КАК Кол
+ИЗ
+	РегистрНакопления.ОстаткиТоваров КАК Р
+ГДЕ
+	Р.Активность
+	И Р.ВидДвижения = ЗНАЧЕНИЕ(ВидДвиженияНакопления.Приход)
+	И Р.Склад ССЫЛКА Справочник.Склады
+	И НЕ ТИПЗНАЧЕНИЯ(Р.Регистратор) = ТИП(Документ.ПриходнаяНакладная)
+	И НЕ ТИПЗНАЧЕНИЯ(Р.Регистратор) = ТИП(Документ.ВнутренняяНакладная)
+	И НЕ ТИПЗНАЧЕНИЯ(Р.Регистратор) = ТИП(Документ.РезервированиеТоваров)
+	И Р.Номенклатура В (&Номенклатура)
+	И Р.Количество > 0"""
 
 Q_ISSUED = """ВЫБРАТЬ
 	ПРЕДСТАВЛЕНИЕ(О.Склад) КАК ЗН,
@@ -195,7 +217,21 @@ Q_RECEIPTS = """ВЫБРАТЬ
 УПОРЯДОЧИТЬ ПО
 	Дата УБЫВ"""
 
-ARTICLE = "О.Номенклатура.Артикул"
+
+
+def article_field(conn) -> str | None:
+    """Имя реквизита справочника «Номенклатура» с артикулом (по метаданным базы)."""
+    from .stock_probe import _call, _items, _prop  # noqa: PLC0415
+    try:
+        md = _prop(conn, "Metadata", "Метаданные")
+        cat = _call(_prop(md, "Catalogs", "Справочники"), "Find", "Найти", args=("Номенклатура",))
+        for a in _items(_prop(cat, "Attributes", "Реквизиты")):
+            name = str(_prop(a, "Name", "Имя"))
+            if ARTICLE_RE.search(name):
+                return name
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def _str(v) -> str:
@@ -229,14 +265,17 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
         return a
 
     def with_article(text: str, cols: tuple[str, ...], **params):
-        """Артикул есть не во всех базах: если реквизита нет - без него."""
+        """Артикул есть не во всех базах: если реквизит не нашёлся или не читается - без него."""
         cond = "И НЕ Номенклатура В ИЕРАРХИИ (&Исключить)" if groups else ""
-        try:
-            return run(text.format(article=ARTICLE, excl=cond), cols, **params)
-        except Exception:  # noqa: BLE001
-            return run(text.format(article='""', excl=cond), cols, **params)
+        if art:
+            try:
+                return run(text.format(article=f"О.Номенклатура.{art}", excl=cond), cols, **params)
+            except Exception:  # noqa: BLE001
+                pass
+        return run(text.format(article='""', excl=cond), cols, **params)
 
     data = StockData(today, min_days)
+    art = article_field(conn)
 
     # группы-исключения: в названии есть одно из слов
     words = group_words(", ".join(exclude or []))
@@ -261,14 +300,21 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
     # приходы этих позиций; ключ сопоставляем по ссылке через представление 1С
     by_ref = {}
     if refs:
-        since = datetime.combine(today - timedelta(days=LOOKBACK_DAYS), datetime.min.time())
         for r in run(Q_RECEIPTS, ("Ном", "Дата", "Номер", "Поставщик", "Автор", "Менеджер", "Вид",
                                   "Кол", "Всего", "ПодЗаказ"),
-                     С=since, Номенклатура=array(ref for _, ref in refs)):
+                     С=SINCE, Номенклатура=array(ref for _, ref in refs)):
             rec = Receipt("", com_datetime(r["Дата"]), _str(r["Номер"]), _str(r["Поставщик"]),
                           _str(r["Автор"]), _str(r["Менеджер"]), _num(r["Кол"]), _num(r["Всего"]),
                           _str(r["ПодЗаказ"]), _str(r["Вид"]))
             by_ref.setdefault(_ref_key(conn, r["Ном"]), []).append(rec)
+        # остаток, пришедший не приходной накладной (инвентаризация, ввод остатков и т.п.)
+        try:
+            for r in run(Q_OTHER_IN, ("Ном", "Дата", "Док", "Кол"), Номенклатура=array(ref for _, ref in refs)):
+                by_ref.setdefault(_ref_key(conn, r["Ном"]), []).append(
+                    Receipt("", com_datetime(r["Дата"]), _str(r["Док"]), "", "", "", _num(r["Кол"]), 0.0,
+                            kind=OTHER_IN))
+        except Exception:  # noqa: BLE001  - без этого просто останется «прихода в базе нет»
+            pass
 
     for key, _ref in refs:
         for row in allocate(items[key], by_ref.get(key, []), today, min_days):

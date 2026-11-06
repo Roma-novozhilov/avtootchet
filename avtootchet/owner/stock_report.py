@@ -22,7 +22,7 @@ MONEY_COLS = {"Цена прихода", "Сумма"}
 
 
 def _row(r: StaleRow) -> list:
-    return [r.name, r.article, r.group, r.qty, r.received, r.days if r.days is not None else "больше 2 лет",
+    return [r.name, r.article, r.group, r.qty, r.received, r.days if r.days is not None else "нет данных",
             r.number, r.supplier, r.author, r.manager, r.price, r.amount]
 
 
@@ -55,7 +55,7 @@ def _summary(wb: Workbook, name: str, title: str, key, rows: list[StaleRow], lab
         a[0] += 1
         a[1] += r.amount
         a[2] = max(a[2], r.days or 10 ** 4)
-    body = [[k, n, round(s, 2), d if d < 10 ** 4 else "больше 2 лет"]
+    body = [[k, n, round(s, 2), d if d < 10 ** 4 else "нет данных"]
             for k, (n, s, d) in sorted(agg.items(), key=lambda kv: -kv[1][1])]
     if not body:
         _cell(ws, row, 1, "Таких позиций нет.", border=False)

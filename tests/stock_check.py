@@ -81,7 +81,27 @@ class Query:
         return type("R", (), {"Choose": lambda _s: Sel([])})()
 
 
+class Coll:
+    def __init__(self, items):
+        self.items = items
+
+    def Count(self):
+        return len(self.items)
+
+    def Get(self, i):
+        return self.items[i]
+
+    def Find(self, name):
+        return next(x for x in self.items if x.Name == name)
+
+
+def _md(name, attrs):
+    return type("M", (), {"Name": name, "Attributes": Coll([type("A", (), {"Name": a})() for a in attrs])})()
+
+
 class Conn:
+    Metadata = type("MD", (), {"Catalogs": Coll([_md("Номенклатура", ["Родитель", "НомерПоКаталогу", "Вес"])])})()
+
     def __init__(self, data):
         self.data, self.queries = data, []
 
@@ -93,19 +113,19 @@ class Conn:
 
 
 def stock_rows(text, params):
-    if "Номенклатура.Артикул" in text:
-        return RuntimeError("Поле не найдено Артикул")      # артикула нет - запрос без него
+    art = "О.Номенклатура.НомерПоКаталогу" in text          # реквизит найден по метаданным
     assert ("В ИЕРАРХИИ (&Исключить)" in text) == bool(params["Исключить"])
     assert params["Исключить"] in ([], ["grp-oil"])
-    return [{"Ном": "n1", "Имя": "Колодки", "Артикул": "", "Группа": "Тормоза", "Кол": 5},
+    return [{"Ном": "n1", "Имя": "Колодки", "Артикул": "GDB1550" if art else "", "Группа": "Тормоза", "Кол": 5},
             {"Ном": "n2", "Имя": "Фара", "Артикул": "", "Группа": "Оптика", "Кол": 1},
-            {"Ном": "n3", "Имя": "Свеча", "Артикул": "", "Группа": "Зажигание", "Кол": 2}]
+            {"Ном": "n3", "Имя": "Свеча", "Артикул": "", "Группа": "Зажигание", "Кол": 2},
+            {"Ном": "n4", "Имя": "Хомут", "Артикул": "", "Группа": "Крепёж", "Кол": 3}]
 
 
 DATA = {
     "Г.ЭтоГруппа": lambda t, p: ([{"Ссылка": "grp-oil", "Имя": "Масла моторные"}]
                                  if p.get("С0") == "%Масло%" else []),
-    "Склад ССЫЛКА Справочник.Склады": stock_rows,
+    "Остатки(, Склад ССЫЛКА Справочник.Склады": stock_rows,
     "Документ.ПриходнаяНакладная.Товары": [
         {"Ном": "n1", "Дата": ago(3), "Номер": "П-3", "Поставщик": "Берг", "Автор": "Склад(АВ)",
          "Менеджер": "", "Вид": "Покупка", "Кол": 3, "Всего": 3000, "ПодЗаказ": ""},
@@ -115,7 +135,11 @@ DATA = {
          "Менеджер": "", "Вид": "Покупка", "Кол": 1, "Всего": 15000, "ПодЗаказ": "Заказ наряд 0042"},
         {"Ном": "n3", "Дата": ago(5), "Номер": "П-5", "Поставщик": "Берг", "Автор": "Семин",
          "Менеджер": "", "Вид": "Покупка", "Кол": 2, "Всего": 800, "ПодЗаказ": ""},
+        {"Ном": "n4", "Дата": ago(100), "Номер": "П-100", "Поставщик": "Амтек", "Автор": "Склад(АВ)",
+         "Менеджер": "", "Вид": "Покупка", "Кол": 0.5, "Всего": 50, "ПодЗаказ": ""},
     ],
+    "РегистрНакопления.ОстаткиТоваров КАК Р": [
+        {"Ном": "n4", "Дата": ago(300), "Док": "Инвентаризация 0001", "Кол": 2}],
     "Склад ССЫЛКА Документ.ЗаказНаряд": [
         {"ЗН": "Заказ наряд 0040", "ДатаЗН": ago(25), "Имя": "Ремень", "Артикул": "", "Кол": 1},
         {"ЗН": "Заказ наряд 0050", "ДатаЗН": ago(2), "Имя": "Фильтр салона", "Артикул": "", "Кол": 1}],
@@ -123,15 +147,17 @@ DATA = {
 
 conn = Conn(DATA)
 data = S.load_stock(conn, TODAY, 14, ["Масло", "Фильтр"])
-assert data.excluded_groups == ["Масла моторные"] and data.items_in_stock == 3
-assert [(r.name, r.qty, r.days, r.author) for r in data.stale] == [("Колодки", 2, 20, "Коровин")], data.stale
+assert data.excluded_groups == ["Масла моторные"] and data.items_in_stock == 4
+got = [(r.name, r.article, r.qty, r.days, r.number, r.price) for r in data.stale]
+assert got == [("Хомут", "", 0.5, None, S.NO_RECEIPT, 100), ("Хомут", "", 2, 300, "Инвентаризация 0001", 100),
+               ("Хомут", "", 0.5, 100, "П-100", 100), ("Колодки", "GDB1550", 2, 20, "П-20", 1100)], got
 assert [(r.name, r.order, r.days) for r in data.ordered] == [("Фара", "Заказ наряд 0042", 30)]
 assert [(r.order, r.days) for r in data.issued] == [("Заказ наряд 0040", 25)], "свежие выдачи в ЗН не нужны"
 rec_q = [p for t, p in conn.queries if "ПриходнаяНакладная" in t][0]
-assert rec_q["Номенклатура"] == ["n1", "n2", "n3"]
+assert rec_q["Номенклатура"] == ["n1", "n2", "n3", "n4"]
 rec_text = [t for t, _ in conn.queries if "ПриходнаяНакладная" in t][0]
-assert "&С" not in rec_text and "ДАТАВРЕМЯ(2024, 11, 9" in rec_text, "дата - литералом, без сдвига"
-assert data.total == 2200
+assert "&С" not in rec_text and "ДАТАВРЕМЯ(2000, 1, 1" in rec_text, "дата - литералом, без сдвига"
+assert data.total == 2200 + 50 + 200 + 50
 
 # --- Excel
 wb = load_workbook(BytesIO(build_stock_report(data)))
@@ -139,8 +165,9 @@ assert wb.sheetnames == ["Залежавшиеся", "Под заказ-наря
 vals = [[c for c in r] for r in wb["Залежавшиеся"].iter_rows(values_only=True)]
 assert "Не учитываются группы: Масла моторные" in vals[1][0]
 line = [r for r in vals if r and r[0] == "Колодки"][0]
-assert line[3] == 2 and line[5] == 20 and line[6] == "П-20" and line[8] == "Коровин" and line[11] == 2200
-assert [r for r in vals if r and r[0] == "Итого"][0][11] == 2200
+assert line[1] == "GDB1550" and line[3] == 2 and line[5] == 20 and line[6] == "П-20" and line[8] == "Коровин" and line[11] == 2200
+assert [r for r in vals if r and r[0] == "Итого"][0][11] == 2500
+assert any(r and r[0] == "Хомут" and r[5] == "нет данных" for r in vals)
 assert any(r and r[0] == "Фара" and r[-1] == "Заказ наряд 0042"
            for r in wb["Под заказ-наряды"].iter_rows(values_only=True))
 assert any(r and r[0] == "Коровин" for r in wb["По менеджерам"].iter_rows(values_only=True))
