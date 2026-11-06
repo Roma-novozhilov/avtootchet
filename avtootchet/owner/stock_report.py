@@ -14,15 +14,15 @@ from openpyxl import Workbook
 from .revenue_report import F_SUB, F_TITLE, _cell, _table
 from .stock import StaleRow, StockData
 
-STALE_HEADERS = ["Запчасть", "Артикул", "Группа", "Лежит, шт", "Дата прихода", "Дней лежит",
+STALE_HEADERS = ["Запчасть", "Артикул", "Производитель", "Группа", "Лежит, шт", "Дата прихода", "Дней лежит",
                  "Приходная накладная", "Поставщик", "Провёл (пользователь 1С)", "Менеджер",
                  "Цена прихода", "Сумма"]
-STALE_WIDTHS = [44, 16, 22, 10, 12, 10, 16, 28, 22, 22, 12, 14]
+STALE_WIDTHS = [44, 16, 16, 22, 10, 12, 10, 16, 28, 22, 22, 12, 14]
 MONEY_COLS = {"Цена прихода", "Сумма"}
 
 
 def _row(r: StaleRow) -> list:
-    return [r.name, r.article, r.group, r.qty, r.received, r.days if r.days is not None else "нет данных",
+    return [r.name, r.article, r.brand, r.group, r.qty, r.received, r.days if r.days is not None else "нет данных",
             r.number, r.supplier, r.author, r.manager, r.price, r.amount]
 
 

@@ -83,10 +83,10 @@ class StockProbe(Probe):
         except AttributeError:
             return "?"
 
-    def _attrs(self, coll) -> str:
+    def _attrs(self, coll, limit: int = MAX_ATTRS) -> str:
         items = _items(coll)
-        text = ", ".join(f"{self._name(a)}: {self._type(a)}" for a in items[:MAX_ATTRS])
-        return text + (f", … ещё {len(items) - MAX_ATTRS}" if len(items) > MAX_ATTRS else "")
+        text = ", ".join(f"{self._name(a)}: {self._type(a)}" for a in items[:limit])
+        return text + (f", … ещё {len(items) - limit}" if len(items) > limit else "")
 
     def goods_documents(self) -> list:
         docs = [d for d in _items(_prop(self._md(), "Documents", "Документы"))
@@ -162,7 +162,12 @@ class StockProbe(Probe):
 
     def nomenclature(self) -> list:
         cat = _find(_prop(self._md(), "Catalogs", "Справочники"), "Номенклатура")
-        out = [f"шапка: {self._attrs(_prop(cat, 'Attributes', 'Реквизиты'))}"]
+        out = [f"шапка: {self._attrs(_prop(cat, 'Attributes', 'Реквизиты'), 500)}"]
+        try:
+            out.append(f"длина кода: {int(_prop(cat, 'CodeLength', 'ДлинаКода'))}, "
+                       f"тип кода: {self._s(_prop(cat, 'CodeType', 'ТипКода'))}")
+        except (AttributeError, TypeError, ValueError):
+            pass
         for ts in _items(_prop(cat, "TabularSections", "ТабличныеЧасти")):
             out.append(f"ТЧ {self._name(ts)}: {self._attrs(_prop(ts, 'Attributes', 'Реквизиты'))}")
         out.append("заполненность строковых реквизитов (сколько позиций, не групп, с непустым значением):")
@@ -244,7 +249,8 @@ Q_FILLED = """ВЫБРАТЬ
 	Справочник.Номенклатура КАК Н
 ГДЕ
 	НЕ Н.ЭтоГруппа
-	И ВЫРАЗИТЬ(Н.{attr} КАК СТРОКА(150)) <> """""
+	И ВЫРАЗИТЬ(Н.{attr} КАК СТРОКА(150)) <> ""
+"""
 
 Q_COUNT = """ВЫБРАТЬ
 	КОЛИЧЕСТВО(*) КАК Кол

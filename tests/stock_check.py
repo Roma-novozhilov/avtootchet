@@ -114,12 +114,13 @@ class Conn:
 
 def stock_rows(text, params):
     art = "О.Номенклатура.НомерПоКаталогу" in text          # реквизит найден по метаданным
+    br = "TRW" if "Номенклатура.Производитель" in text else ""
     assert ("В ИЕРАРХИИ (&Исключить)" in text) == bool(params["Исключить"])
     assert params["Исключить"] in ([], ["grp-oil"])
-    return [{"Ном": "n1", "Имя": "Колодки", "Артикул": "GDB1550" if art else "", "Группа": "Тормоза", "Кол": 5},
-            {"Ном": "n2", "Имя": "Фара", "Артикул": "", "Группа": "Оптика", "Кол": 1},
-            {"Ном": "n3", "Имя": "Свеча", "Артикул": "", "Группа": "Зажигание", "Кол": 2},
-            {"Ном": "n4", "Имя": "Хомут", "Артикул": "", "Группа": "Крепёж", "Кол": 3}]
+    return [{"Ном": "n1", "Имя": "Колодки", "Артикул": "GDB1550" if art else "", "Бренд": br, "Группа": "Тормоза", "Кол": 5},
+            {"Ном": "n2", "Бренд": "", "Имя": "Фара", "Артикул": "", "Группа": "Оптика", "Кол": 1},
+            {"Ном": "n3", "Бренд": "", "Имя": "Свеча", "Артикул": "", "Группа": "Зажигание", "Кол": 2},
+            {"Ном": "n4", "Бренд": "", "Имя": "Хомут", "Артикул": "", "Группа": "Крепёж", "Кол": 3}]
 
 
 DATA = {
@@ -141,14 +142,17 @@ DATA = {
     "РегистрНакопления.ОстаткиТоваров КАК Р": [
         {"Ном": "n4", "Дата": ago(300), "Док": "Инвентаризация 0001", "Кол": 2}],
     "Склад ССЫЛКА Документ.ЗаказНаряд": [
-        {"ЗН": "Заказ наряд 0040", "ДатаЗН": ago(25), "Имя": "Ремень", "Артикул": "", "Кол": 1},
-        {"ЗН": "Заказ наряд 0050", "ДатаЗН": ago(2), "Имя": "Фильтр салона", "Артикул": "", "Кол": 1}],
+        {"ЗН": "Заказ наряд 0040", "ДатаЗН": ago(25), "Имя": "Ремень", "Артикул": "", "Бренд": "", "Кол": 1},
+        {"ЗН": "Заказ наряд 0050", "ДатаЗН": ago(2), "Имя": "Фильтр салона", "Артикул": "", "Бренд": "", "Кол": 1}],
 }
 
 conn = Conn(DATA)
 data = S.load_stock(conn, TODAY, 14, ["Масло", "Фильтр"], months=0)
 assert data.excluded_groups == ["Масла моторные"] and data.items_in_stock == 4
 assert data.article_field == "НомерПоКаталогу"
+class NoMeta(Conn):
+    Metadata = None
+assert S.article_field(NoMeta(DATA)) == "Код", "по умолчанию - стандартный «Код» номенклатуры"
 forced = S.load_stock(Conn(DATA), TODAY, 14, [], months=0, article="НетТакого")
 assert forced.article_field == "НетТакого (не читается)" or forced.article_field == "НетТакого"
 got = [(r.name, r.article, r.qty, r.days, r.number, r.price) for r in data.stale]
@@ -176,9 +180,10 @@ assert wb.sheetnames == ["Залежавшиеся", "Под заказ-наря
 vals = [[c for c in r] for r in wb["Залежавшиеся"].iter_rows(values_only=True)]
 assert "Не учитываются группы: Масла моторные" in vals[1][0]
 line = [r for r in vals if r and r[0] == "Колодки"][0]
-assert line[1] == "GDB1550" and line[3] == 2 and line[5] == 20 and line[6] == "П-20" and line[8] == "Коровин" and line[11] == 2200
-assert [r for r in vals if r and r[0] == "Итого"][0][11] == 2500
-assert any(r and r[0] == "Хомут" and r[5] == "нет данных" for r in vals)
+assert line[1] == "GDB1550" and line[2] == "TRW" and line[4] == 2 and line[6] == 20 and line[7] == "П-20"
+assert line[9] == "Коровин" and line[12] == 2200
+assert [r for r in vals if r and r[0] == "Итого"][0][12] == 2500
+assert any(r and r[0] == "Хомут" and r[6] == "нет данных" for r in vals)
 assert any(r and r[0] == "Фара" and r[-1] == "Заказ наряд 0042"
            for r in wb["Под заказ-наряды"].iter_rows(values_only=True))
 assert any(r and r[0] == "Коровин" for r in wb["По менеджерам"].iter_rows(values_only=True))
