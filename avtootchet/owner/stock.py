@@ -52,6 +52,7 @@ class StockItem:
     article: str
     group: str
     qty: float
+    brand: str = ""
 
 
 @dataclass
@@ -69,6 +70,7 @@ class StaleRow:
     price: float
     order: str = ""
     kind: str = ""
+    brand: str = ""
 
     @property
     def amount(self) -> float:
@@ -124,10 +126,10 @@ def allocate(item: StockItem, receipts: list[Receipt], today: date, min_days: in
         if days >= min_days:
             out.append(StaleRow(item.name, item.article, item.group, round(take, 3), r.dt.date(), days,
                                 r.number, r.supplier, r.author, r.manager,
-                                round(r.price if r.price > 0 else last_price, 2), r.order, r.kind))
+                                round(r.price if r.price > 0 else last_price, 2), r.order, r.kind, item.brand))
     if left > 1e-9:
         out.append(StaleRow(item.name, item.article, item.group, round(left, 3), None, None,
-                            NO_RECEIPT, "", "", "", round(last_price, 2)))
+                            NO_RECEIPT, "", "", "", round(last_price, 2), brand=item.brand))
     return out
 
 
@@ -154,6 +156,7 @@ Q_STOCK = """ВЫБРАТЬ
 	О.Номенклатура КАК Ном,
 	ПРЕДСТАВЛЕНИЕ(О.Номенклатура) КАК Имя,
 	{article} КАК Артикул,
+	{brand} КАК Бренд,
 	ПРЕДСТАВЛЕНИЕ(О.Номенклатура.Родитель) КАК Группа,
 	СУММА(О.КоличествоОстаток) КАК Кол
 ИЗ
@@ -186,6 +189,7 @@ Q_ISSUED = """ВЫБРАТЬ
 	О.Склад.Дата КАК ДатаЗН,
 	ПРЕДСТАВЛЕНИЕ(О.Номенклатура) КАК Имя,
 	{article} КАК Артикул,
+	{brand} КАК Бренд,
 	СУММА(О.КоличествоОстаток) КАК Кол
 ИЗ
 	РегистрНакопления.ОстаткиТоваров.Остатки(, Склад ССЫЛКА Документ.ЗаказНаряд
@@ -235,7 +239,7 @@ def article_field(conn) -> str | None:
                 return name
     except Exception:  # noqa: BLE001
         pass
-    return None
+    return "Код"            # в Далионе артикул (номер детали) - это стандартный «Код» номенклатуры
 
 
 def _str(v) -> str:
@@ -283,14 +287,19 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
     def with_article(text: str, cols: tuple[str, ...], **params):
         """Артикул есть не во всех базах: если реквизит не нашёлся или не читается - без него."""
         cond = "И НЕ Номенклатура В ИЕРАРХИИ (&Исключить)" if groups else ""
-        if art:
+        brand = "ПРЕДСТАВЛЕНИЕ(О.Номенклатура.Производитель)"
+        tries = ([(f"О.Номенклатура.{art}", brand), (f"О.Номенклатура.{art}", '""')] if art else []) + \
+            [('""', brand), ('""', '""')]
+        for i, (a, b) in enumerate(tries):
             try:
-                rows = run(text.format(article=f"О.Номенклатура.{art}", excl=cond), cols, **params)
-                data.article_field = art
-                return rows
+                rows = run(text.format(article=a, brand=b, excl=cond), cols, **params)
             except Exception:  # noqa: BLE001
-                data.article_field = f"{art} (не читается)"
-        return run(text.format(article='""', excl=cond), cols, **params)
+                if i == len(tries) - 1:
+                    raise
+                continue
+            data.article_field = art if a != '""' else (f"{art} (не читается)" if art else "")
+            return rows
+        return []
 
     data = StockData(today, min_days, months=months)
     cutoff = months_ago(today, months) if months else None
@@ -307,12 +316,13 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
             data.excluded_groups.append(_str(r["Имя"]))
     excl = array(groups)
 
-    stock = with_article(Q_STOCK, ("Ном", "Имя", "Артикул", "Группа", "Кол"), Исключить=excl)
+    stock = with_article(Q_STOCK, ("Ном", "Имя", "Артикул", "Бренд", "Группа", "Кол"), Исключить=excl)
     items = {}
     refs = []
     for r in stock:
         key = _ref_key(conn, r["Ном"])
-        items[key] = StockItem(key, _str(r["Имя"]), _str(r["Артикул"]), _str(r["Группа"]), _num(r["Кол"]))
+        items[key] = StockItem(key, _str(r["Имя"]), _str(r["Артикул"]), _str(r["Группа"]), _num(r["Кол"]),
+                               _str(r["Бренд"]))
         refs.append((key, r["Ном"]))
     data.items_in_stock = len(items)
 
@@ -344,7 +354,7 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
             (data.ordered if row.order else data.stale).append(row)
     data.stale, data.ordered = sort_rows(data.stale), sort_rows(data.ordered)
 
-    for r in with_article(Q_ISSUED, ("ЗН", "ДатаЗН", "Имя", "Артикул", "Кол"), Исключить=excl):
+    for r in with_article(Q_ISSUED, ("ЗН", "ДатаЗН", "Имя", "Артикул", "Бренд", "Кол"), Исключить=excl):
         d = com_datetime(r["ДатаЗН"]).date() if r["ДатаЗН"] and hasattr(r["ДатаЗН"], "year") else None
         days = (today - d).days if d else None
         if days is None or days >= min_days:
