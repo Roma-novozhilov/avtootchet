@@ -116,6 +116,12 @@ class OwnerSettingsDialog(QDialog):
         self.stock_days.setValue(int(st.get("days") or 14))
         self.stock_days.setSuffix(" дн.")
         f.addRow("Лежат дольше:", self.stock_days)
+        self.stock_months = QSpinBox()
+        self.stock_months.setRange(0, 120)
+        self.stock_months.setValue(int(st.get("months", 6) or 0))
+        self.stock_months.setSuffix(" мес.")
+        self.stock_months.setSpecialValueText("за всё время")
+        f.addRow("Приходы за последние:", self.stock_months)
         self.stock_exclude = QLineEdit(st.get("exclude", ""))
         self.stock_exclude.setPlaceholderText("слова через запятую: Масло, Фильтр")
         f.addRow("Не учитывать группы:", self.stock_exclude)
@@ -263,7 +269,7 @@ class OwnerSettingsDialog(QDialog):
                          "main_suppliers": self.suppliers.text().strip(),
                          "platform": self.platform.text().strip(),
                          "organization": self.organization.text().strip()}
-        self.s["stock"] = {"days": self.stock_days.value(),
+        self.s["stock"] = {"days": self.stock_days.value(), "months": self.stock_months.value(),
                            "exclude": self.stock_exclude.text().strip(),
                            "folder": self.stock_folder.text().strip()}
         self.s["port"] = self.port.value()

@@ -28,6 +28,7 @@ def stock_settings(settings) -> dict:
     st = settings["stock"] if "stock" in settings.data else {}
     return {"folder": st.get("folder") or DEFAULT_FOLDER,
             "days": int(st.get("days") or 14),
+            "months": int(st.get("months", 6) or 0),
             "exclude": st.get("exclude", "Масло, Фильтр")}
 
 
@@ -40,7 +41,8 @@ def build(settings, today: date | None = None):
     src._check_settings()
     conn = src._connect()
     try:
-        data = load_stock(conn, today or date.today(), st["days"], group_words(st["exclude"]))
+        data = load_stock(conn, today or date.today(), st["days"], group_words(st["exclude"]),
+                          st["months"])
     except Exception as e:  # noqa: BLE001
         raise SourceError(f"Ошибка запроса к 1С: {e or type(e).__name__}") from None
     return data, build_stock_report(data)
