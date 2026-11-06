@@ -148,6 +148,9 @@ DATA = {
 conn = Conn(DATA)
 data = S.load_stock(conn, TODAY, 14, ["Масло", "Фильтр"], months=0)
 assert data.excluded_groups == ["Масла моторные"] and data.items_in_stock == 4
+assert data.article_field == "НомерПоКаталогу"
+forced = S.load_stock(Conn(DATA), TODAY, 14, [], months=0, article="НетТакого")
+assert forced.article_field == "НетТакого (не читается)" or forced.article_field == "НетТакого"
 got = [(r.name, r.article, r.qty, r.days, r.number, r.price) for r in data.stale]
 assert got == [("Хомут", "", 0.5, None, S.NO_RECEIPT, 100), ("Хомут", "", 2, 300, "Инвентаризация 0001", 100),
                ("Хомут", "", 0.5, 100, "П-100", 100), ("Колодки", "GDB1550", 2, 20, "П-20", 1100)], got

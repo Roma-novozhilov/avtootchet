@@ -96,6 +96,7 @@ class StockData:
     excluded_groups: list[str] = field(default_factory=list)
     items_in_stock: int = 0
     months: int = 0                    # 0 - без ограничения; иначе только приходы за N месяцев
+    article_field: str = ""            # реквизит номенклатуры, из которого взят артикул
     older_count: int = 0               # не вошло: пришло раньше или прихода нет
     older_sum: float = 0.0
     loaded_at: datetime = field(default_factory=datetime.now)
@@ -224,10 +225,10 @@ Q_RECEIPTS = """ВЫБРАТЬ
 
 def article_field(conn) -> str | None:
     """Имя реквизита справочника «Номенклатура» с артикулом (по метаданным базы)."""
-    from .stock_probe import _call, _items, _prop  # noqa: PLC0415
+    from .stock_probe import _find, _items, _prop  # noqa: PLC0415
     try:
         md = _prop(conn, "Metadata", "Метаданные")
-        cat = _call(_prop(md, "Catalogs", "Справочники"), "Find", "Найти", args=("Номенклатура",))
+        cat = _find(_prop(md, "Catalogs", "Справочники"), "Номенклатура")
         for a in _items(_prop(cat, "Attributes", "Реквизиты")):
             name = str(_prop(a, "Name", "Имя"))
             if ARTICLE_RE.search(name):
@@ -260,7 +261,7 @@ def months_ago(d: date, months: int) -> date:
 
 
 def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None = None,
-               months: int = 6) -> StockData:
+               months: int = 6, article: str = "") -> StockData:
     """conn - подключение COM к Далиону."""
     def run(text: str, cols: tuple[str, ...], **params):
         q = conn.NewObject("Запрос")
@@ -284,14 +285,16 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
         cond = "И НЕ Номенклатура В ИЕРАРХИИ (&Исключить)" if groups else ""
         if art:
             try:
-                return run(text.format(article=f"О.Номенклатура.{art}", excl=cond), cols, **params)
+                rows = run(text.format(article=f"О.Номенклатура.{art}", excl=cond), cols, **params)
+                data.article_field = art
+                return rows
             except Exception:  # noqa: BLE001
-                pass
+                data.article_field = f"{art} (не читается)"
         return run(text.format(article='""', excl=cond), cols, **params)
 
     data = StockData(today, min_days, months=months)
     cutoff = months_ago(today, months) if months else None
-    art = article_field(conn)
+    art = article.strip() or article_field(conn)
 
     # группы-исключения: в названии есть одно из слов
     words = group_words(", ".join(exclude or []))

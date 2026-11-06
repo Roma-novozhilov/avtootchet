@@ -20,6 +20,7 @@ SKIP_RE = re.compile(r"денег|денеж|ДС$|касс|зарплат|ав�
 # реквизиты шапки, по которым ищем «менеджера», склад и связь с заказом
 HEAD_RE = re.compile(r"ответствен|автор|менеджер|сотрудник|пользоват|склад|основан|заказ|"
                      r"контрагент|поставщик|подразделен|вид", re.I)
+ARTICLE_OBJ_RE = re.compile(r"артикул|каталож|кросс|аналог|штрих|номерпроизв|производител", re.I)
 GOODS_RE = re.compile(r"номенклатур|товар|запчаст", re.I)
 MAX_ATTRS = 40
 
@@ -42,6 +43,17 @@ def _call(obj, *names, args=()):
             continue
         return f(*args)
     raise AttributeError(names[0])
+
+
+def _find(coll, name: str):
+    """Объект метаданных по имени: Find(), а если его нет - перебором."""
+    try:
+        return _call(coll, "Find", "Найти", args=(name,))
+    except AttributeError:
+        for o in _items(coll):
+            if str(_prop(o, "Name", "Имя")) == name:
+                return o
+    raise AttributeError(name)
 
 
 def _items(coll) -> list:
@@ -148,6 +160,40 @@ class StockProbe(Probe):
                     out.append(f"  {an}: ОШИБКА: {e}")
         return out
 
+    def nomenclature(self) -> list:
+        cat = _find(_prop(self._md(), "Catalogs", "Справочники"), "Номенклатура")
+        out = [f"шапка: {self._attrs(_prop(cat, 'Attributes', 'Реквизиты'))}"]
+        for ts in _items(_prop(cat, "TabularSections", "ТабличныеЧасти")):
+            out.append(f"ТЧ {self._name(ts)}: {self._attrs(_prop(ts, 'Attributes', 'Реквизиты'))}")
+        out.append("заполненность строковых реквизитов (сколько позиций, не групп, с непустым значением):")
+        for a in _items(_prop(cat, "Attributes", "Реквизиты")):
+            if "строк" not in self._type(a).lower():
+                continue
+            an = self._name(a)
+            try:
+                rows = self._rows(Q_FILLED.format(attr=an), "Кол")
+                out.append(f"  {an}: {int(rows[0][0]) if rows else 0}")
+            except Exception as e:  # noqa: BLE001
+                out.append(f"  {an}: ОШИБКА: {e}")
+        return out
+
+    def article_objects(self) -> list:
+        out = []
+        for coll, label in (("Catalogs", "справочник"), ("InformationRegisters", "регистр сведений")):
+            ru = {"Catalogs": "Справочники", "InformationRegisters": "РегистрыСведений"}[coll]
+            for o in _items(_prop(self._md(), coll, ru)):
+                if not ARTICLE_OBJ_RE.search(self._title(o)):
+                    continue
+                parts = []
+                for kind, en, ruk in (("измерения", "Dimensions", "Измерения"), ("ресурсы", "Resources", "Ресурсы"),
+                                      ("реквизиты", "Attributes", "Реквизиты")):
+                    try:
+                        parts.append(f"{kind}: {self._attrs(_prop(o, en, ruk))}")
+                    except AttributeError:
+                        continue
+                out.append(f"[{label} {self._title(o)}] " + "; ".join(parts))
+        return out
+
     def run(self) -> str:
         self.src._check_settings()
         self.conn = self.src._connect()
@@ -161,6 +207,9 @@ class StockProbe(Probe):
                       self.register_moves)
         self._section("4. Документы за период: сколько проведено и сколько разных значений "
                       "в реквизитах «ответственный / склад / заказ / основание»", self.documents_fill)
+        self._section("5. Справочник «Номенклатура»: где хранится артикул", self.nomenclature)
+        self._section("6. Справочники и регистры сведений про артикулы, каталожные номера, аналоги",
+                      self.article_objects)
         return "\n".join(self.lines)
 
 
@@ -188,6 +237,14 @@ Q_MOVES_TURNOVER = """ВЫБРАТЬ
 	И Р.Период МЕЖДУ &Начало И &Конец
 СГРУППИРОВАТЬ ПО
 	ТИПЗНАЧЕНИЯ(Р.Регистратор)"""
+
+Q_FILLED = """ВЫБРАТЬ
+	КОЛИЧЕСТВО(*) КАК Кол
+ИЗ
+	Справочник.Номенклатура КАК Н
+ГДЕ
+	НЕ Н.ЭтоГруппа
+	И ВЫРАЗИТЬ(Н.{attr} КАК СТРОКА(150)) <> """""
 
 Q_COUNT = """ВЫБРАТЬ
 	КОЛИЧЕСТВО(*) КАК Кол
