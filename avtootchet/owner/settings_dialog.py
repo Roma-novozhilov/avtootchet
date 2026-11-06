@@ -107,6 +107,37 @@ class OwnerSettingsDialog(QDialog):
         f.addRow(hint)
         lay.addWidget(g)
 
+        # --- утренний отчёт по складу
+        st = settings["stock"]
+        g = QGroupBox("Отчёт «Залежавшиеся запчасти»")
+        f = QFormLayout(g)
+        self.stock_days = QSpinBox()
+        self.stock_days.setRange(1, 365)
+        self.stock_days.setValue(int(st.get("days") or 14))
+        self.stock_days.setSuffix(" дн.")
+        f.addRow("Лежат дольше:", self.stock_days)
+        self.stock_exclude = QLineEdit(st.get("exclude", ""))
+        self.stock_exclude.setPlaceholderText("слова через запятую: Масло, Фильтр")
+        f.addRow("Не учитывать группы:", self.stock_exclude)
+        self.stock_folder = QLineEdit(st.get("folder", ""))
+        pick = QPushButton("…")
+        pick.setFixedWidth(32)
+        pick.clicked.connect(self._pick_stock_folder)
+        row = QHBoxLayout()
+        row.addWidget(self.stock_folder)
+        row.addWidget(pick)
+        row.setContentsMargins(0, 0, 0, 0)
+        w = QWidget()
+        w.setLayout(row)
+        f.addRow("Папка утреннего отчёта:", w)
+        hint = QLabel("Группы — по словам в названии группы номенклатуры. Утренний отчёт "
+                      "(задача Windows, «AvtoOtchet-Vladelec.exe --stock-report») кладётся в эту "
+                      "папку с паролем для отчётов; вчерашний удаляется.")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        f.addRow(hint)
+        lay.addWidget(g)
+
         # --- приём файлов
         g = QGroupBox("Приём кассовой книги от бухгалтера")
         f = QFormLayout(g)
@@ -202,6 +233,11 @@ class OwnerSettingsDialog(QDialog):
 
         run_in_background(lambda: run_stock_probe(self._com_source()), done)
 
+    def _pick_stock_folder(self):
+        path = QFileDialog.getExistingDirectory(self, "Папка утреннего отчёта", self.stock_folder.text())
+        if path:
+            self.stock_folder.setText(path.replace("/", "\\"))
+
     def _pick_demo(self):
         path, _ = QFileDialog.getOpenFileName(self, "Файл выгрузки", self.demo_file.text(),
                                               "Выгрузка (*.json)")
@@ -227,6 +263,9 @@ class OwnerSettingsDialog(QDialog):
                          "main_suppliers": self.suppliers.text().strip(),
                          "platform": self.platform.text().strip(),
                          "organization": self.organization.text().strip()}
+        self.s["stock"] = {"days": self.stock_days.value(),
+                           "exclude": self.stock_exclude.text().strip(),
+                           "folder": self.stock_folder.text().strip()}
         self.s["port"] = self.port.value()
         self.s["secret"] = self.secret.text().strip()
         self.s.save()
