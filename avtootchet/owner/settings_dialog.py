@@ -10,6 +10,7 @@ from ..common.crypto import new_secret
 from ..common.xlsx_crypto import MIN_PASSWORD
 from ..common.ui import run_in_background
 from .probe import run_probe
+from .stock_probe import run_stock_probe
 from .sources import ComSource
 
 
@@ -75,9 +76,14 @@ class OwnerSettingsDialog(QDialog):
                                   "без сумм и клиентов. За последние 31 день.")
         self.btn_probe.clicked.connect(self._probe)
         f.addRow(self.btn_probe)
+        self.btn_stock = QPushButton("Проверить структуру склада (без сумм)")
+        self.btn_stock.setToolTip("Какие документы двигают запчасти и где в них ответственный: "
+                                  "только названия и количества, без сумм и номенклатуры. За 31 день.")
+        self.btn_stock.clicked.connect(self._stock_probe)
+        f.addRow(self.btn_stock)
         self.com_widgets = [self.server, self.base, self.user, self.password, self.platform,
                             self.organization, self.cashboxes, self.oil_groups, self.suppliers,
-                            self.btn_test, self.btn_probe]
+                            self.btn_test, self.btn_probe, self.btn_stock]
         lay.addWidget(g)
 
         # --- пароль отчётов
@@ -181,6 +187,20 @@ class OwnerSettingsDialog(QDialog):
             TextDialog("Структура базы", text, self).exec()
 
         run_in_background(lambda: run_probe(self._com_source()), done)
+
+    def _stock_probe(self):
+        self.btn_stock.setEnabled(False)
+        self.btn_stock.setText("Проверяю склад… (до пары минут)")
+
+        def done(text, err):
+            self.btn_stock.setEnabled(True)
+            self.btn_stock.setText("Проверить структуру склада (без сумм)")
+            if err:
+                QMessageBox.critical(self, "1С", str(err))
+                return
+            TextDialog("Структура склада", text, self).exec()
+
+        run_in_background(lambda: run_stock_probe(self._com_source()), done)
 
     def _pick_demo(self):
         path, _ = QFileDialog.getOpenFileName(self, "Файл выгрузки", self.demo_file.text(),
