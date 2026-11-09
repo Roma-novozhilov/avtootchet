@@ -99,6 +99,7 @@ class StockData:
     items_in_stock: int = 0
     months: int = 0                    # 0 - без ограничения; иначе только приходы за N месяцев
     article_field: str = ""            # реквизит номенклатуры, из которого взят артикул
+    groups: list[tuple[str, str, bool]] = field(default_factory=list)  # (группа, родитель, учитывается)
     older_count: int = 0               # не вошло: пришло раньше или прихода нет
     older_sum: float = 0.0
     loaded_at: datetime = field(default_factory=datetime.now)
@@ -151,6 +152,17 @@ Q_GROUPS = """ВЫБРАТЬ
 ГДЕ
 	Г.ЭтоГруппа
 	И ({cond})"""
+
+Q_ALL_GROUPS = """ВЫБРАТЬ
+	Г.Ссылка КАК Ссылка,
+	Г.Наименование КАК Имя,
+	Г.Родитель КАК Родитель,
+	ПРЕДСТАВЛЕНИЕ(Г.Родитель) КАК ИмяРодителя
+ИЗ
+	Справочник.Номенклатура КАК Г
+ГДЕ
+	Г.ЭтоГруппа
+	И НЕ Г.ПометкаУдаления"""
 
 Q_STOCK = """ВЫБРАТЬ
 	О.Номенклатура КАК Ном,
@@ -315,6 +327,19 @@ def load_stock(conn, today: date, min_days: int = 14, exclude: list[str] | None 
             groups.append(r["Ссылка"])
             data.excluded_groups.append(_str(r["Имя"]))
     excl = array(groups)
+
+    # все группы - чтобы было видно, что учтено, а что нет (подгруппы исключённых - тоже исключены)
+    try:
+        allg = run(Q_ALL_GROUPS, ("Ссылка", "Имя", "Родитель", "ИмяРодителя"))
+        parent = {_ref_key(conn, g["Ссылка"]): _ref_key(conn, g["Родитель"]) for g in allg}
+        out_keys = {_ref_key(conn, g) for g in groups}
+
+        def excluded(k, depth=0):
+            return k in out_keys or (depth < 30 and k in parent and excluded(parent[k], depth + 1))
+        data.groups = sorted(((_str(g["Имя"]), _str(g["ИмяРодителя"]), not excluded(_ref_key(conn, g["Ссылка"])))
+                              for g in allg), key=lambda t: (t[1], t[0]))
+    except Exception:  # noqa: BLE001  - лист групп необязателен
+        data.groups = []
 
     stock = with_article(Q_STOCK, ("Ном", "Имя", "Артикул", "Бренд", "Группа", "Кол"), Исключить=excl)
     items = {}

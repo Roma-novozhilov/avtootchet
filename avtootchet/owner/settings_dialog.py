@@ -122,12 +122,17 @@ class OwnerSettingsDialog(QDialog):
         self.stock_months.setSuffix(" мес.")
         self.stock_months.setSpecialValueText("за всё время")
         f.addRow("Приходы за последние:", self.stock_months)
-        self.stock_exclude = QLineEdit(st.get("exclude", ""))
-        self.stock_exclude.setPlaceholderText("слова через запятую: Масло, Фильтр")
+        from .stock_job import stock_settings  # noqa: PLC0415
+        sst = stock_settings(settings)
+        self.stock_exclude = QLineEdit(sst["exclude"])
+        self.stock_exclude.setPlaceholderText("слова через запятую: Расходные, Инструмент")
         f.addRow("Не учитывать группы:", self.stock_exclude)
         self.stock_article = QLineEdit(st.get("article", ""))
         self.stock_article.setPlaceholderText("пусто — найти автоматически")
         f.addRow("Реквизит артикула:", self.stock_article)
+        self.stock_encrypt = QCheckBox("Шифровать паролем для отчётов")
+        self.stock_encrypt.setChecked(sst["encrypt"])
+        f.addRow("", self.stock_encrypt)
         self.stock_folder = QLineEdit(st.get("folder", ""))
         pick = QPushButton("…")
         pick.setFixedWidth(32)
@@ -141,7 +146,7 @@ class OwnerSettingsDialog(QDialog):
         f.addRow("Папка утреннего отчёта:", w)
         hint = QLabel("Группы — по словам в названии группы номенклатуры. Утренний отчёт "
                       "(задача Windows, «AvtoOtchet-Vladelec.exe --stock-report») кладётся в эту "
-                      "папку с паролем для отчётов; вчерашний удаляется.")
+                      "папку (с паролем, если он включён); вчерашний удаляется. Список групп и что из них учтено — на листе «Группы» в самом отчёте.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         f.addRow(hint)
@@ -274,6 +279,7 @@ class OwnerSettingsDialog(QDialog):
                          "organization": self.organization.text().strip()}
         self.s["stock"] = {"days": self.stock_days.value(), "months": self.stock_months.value(),
                            "article": self.stock_article.text().strip(),
+                           "encrypt": self.stock_encrypt.isChecked(),
                            "exclude": self.stock_exclude.text().strip(),
                            "folder": self.stock_folder.text().strip()}
         self.s["port"] = self.port.value()

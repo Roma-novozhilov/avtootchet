@@ -2,7 +2,7 @@
 
     AvtoOtchet-Vladelec.exe --stock-report
 
-Читает Далион (только чтение), сохраняет зашифрованный Excel в папку из настроек и
+Читает Далион (только чтение), сохраняет Excel (без пароля, если не включено шифрование) в папку из настроек и
 завершается. В папке остаётся только свежий отчёт: старые удаляются ПОСЛЕ того, как
 новый записан. Если отчёт построить не удалось - старый не трогается, рядом появляется
 «ОШИБКА — отчёт не построен.txt» с причиной (при следующем удачном запуске он удаляется).
@@ -22,15 +22,22 @@ from .stock_report import build_stock_report, stock_filename
 PREFIX = "Залежавшиеся запчасти "
 ERROR_FILE = "ОШИБКА — отчёт не построен.txt"
 DEFAULT_FOLDER = r"F:\Отчёты\Склад"
+# не запчасти: расходники, инструмент, хозтовары. Масло, антифриз и прочие жидкости - учитываются
+DEFAULT_EXCLUDE = "Расходные, Слесарные, Инструмент, Хозяйствен, Канцеляр, Спецодежд, Уборк, Вода"
+OLD_DEFAULTS = {"Масло, Фильтр"}
 
 
 def stock_settings(settings) -> dict:
     st = settings["stock"] if "stock" in settings.data else {}
+    exclude = st.get("exclude", DEFAULT_EXCLUDE)
+    if exclude.strip() in OLD_DEFAULTS:          # прежнее «Масло, Фильтр» - теперь масло учитываем
+        exclude = DEFAULT_EXCLUDE
     return {"folder": st.get("folder") or DEFAULT_FOLDER,
             "days": int(st.get("days") or 14),
             "months": int(st.get("months", 6) or 0),
             "article": st.get("article", ""),
-            "exclude": st.get("exclude", "Масло, Фильтр")}
+            "exclude": exclude,
+            "encrypt": bool(st.get("encrypt", False))}
 
 
 def build(settings, today: date | None = None):
@@ -82,9 +89,11 @@ def run_morning(settings=None, today: date | None = None) -> int:
     st = stock_settings(settings)
     folder = Path(st["folder"])
     try:
-        check_password(settings["report_password"])
+        if st["encrypt"]:
+            check_password(settings["report_password"])
         data, xlsx = build(settings, today)
-        target = save_rotating(folder, stock_filename(data), encrypt_xlsx(xlsx, settings["report_password"]))
+        payload = encrypt_xlsx(xlsx, settings["report_password"]) if st["encrypt"] else xlsx
+        target = save_rotating(folder, stock_filename(data), payload)
         journal.write("Утренний отчёт по складу записан",
                       f"{target.name}, позиций: {len(data.stale)}, под заказ: {len(data.ordered)}")
         return 0
