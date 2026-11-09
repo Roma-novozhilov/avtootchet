@@ -124,6 +124,10 @@ def stock_rows(text, params):
 
 
 DATA = {
+    "НЕ Г.ПометкаУдаления": [
+        {"Ссылка": "grp-oil", "Имя": "Масла моторные", "Родитель": "grp-root", "ИмяРодителя": "Жидкости"},
+        {"Ссылка": "grp-5w30", "Имя": "5W-30", "Родитель": "grp-oil", "ИмяРодителя": "Масла моторные"},
+        {"Ссылка": "grp-root", "Имя": "Жидкости", "Родитель": "", "ИмяРодителя": ""}],
     "Г.ЭтоГруппа": lambda t, p: ([{"Ссылка": "grp-oil", "Имя": "Масла моторные"}]
                                  if p.get("С0") == "%Масло%" else []),
     "Остатки(, Склад ССЫЛКА Справочник.Склады": stock_rows,
@@ -176,7 +180,10 @@ assert "Приходы за последние 6 мес." in sub6 and "2 поз.
 
 # --- Excel
 wb = load_workbook(BytesIO(build_stock_report(data)))
-assert wb.sheetnames == ["Залежавшиеся", "Под заказ-наряды", "Выданы в ЗН", "По менеджерам", "По поставщикам"]
+assert wb.sheetnames == ["Залежавшиеся", "Под заказ-наряды", "Выданы в ЗН", "По менеджерам", "По поставщикам",
+                         "Группы"]
+grp = {r[0]: r[2] for r in wb["Группы"].iter_rows(min_row=5, values_only=True) if r and r[0]}
+assert grp == {"Жидкости": "да", "Масла моторные": "нет", "5W-30": "нет"}, grp
 vals = [[c for c in r] for r in wb["Залежавшиеся"].iter_rows(values_only=True)]
 assert "Не учитываются группы: Масла моторные" in vals[1][0]
 line = [r for r in vals if r and r[0] == "Колодки"][0]
@@ -221,5 +228,13 @@ names = sorted(p.name for p in folder.iterdir())
 assert names == ["Залежавшиеся запчасти 09.11.2026.xlsx", "чужой файл.xlsx"], names
 from avtootchet.common.xlsx_crypto import decrypt_xlsx, is_encrypted  # noqa: E402
 blob = (folder / "Залежавшиеся запчасти 09.11.2026.xlsx").read_bytes()
+assert not is_encrypted(blob), "отчёт по складу по умолчанию без пароля"
+assert load_workbook(BytesIO(blob)).sheetnames[0] == "Залежавшиеся"
+st["stock"] = dict(st["stock"], encrypt=True)
+assert J.run_morning(st, TODAY) == 0
+blob = (folder / "Залежавшиеся запчасти 09.11.2026.xlsx").read_bytes()
 assert is_encrypted(blob) and load_workbook(BytesIO(decrypt_xlsx(blob, "secret123"))).sheetnames[0] == "Залежавшиеся"
+# прежняя настройка «Масло, Фильтр» заменяется новой: масло теперь учитывается
+st["stock"] = dict(st["stock"], exclude="Масло, Фильтр")
+assert J.stock_settings(st)["exclude"] == J.DEFAULT_EXCLUDE and "Масл" not in J.DEFAULT_EXCLUDE
 print("OK: залежавшиеся запчасти")

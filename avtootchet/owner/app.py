@@ -49,8 +49,9 @@ DEFAULTS = {
     "folders": [],          # папки, выбранные для сохранения отчётов (последние сверху)
     "last_target": "",
     # утренний отчёт «Залежавшиеся запчасти» (stock_job.py, запуск с --stock-report)
-    "stock": {"folder": r"F:\Отчёты\Склад", "days": 14, "months": 6, "exclude": "Масло, Фильтр",
-              "article": ""},
+    "stock": {"folder": r"F:\Отчёты\Склад", "days": 14, "months": 6,
+              "exclude": "Расходные, Слесарные, Инструмент, Хозяйствен, Канцеляр, Спецодежд, Уборк, Вода",
+              "article": "", "encrypt": False},
 }
 PICK_FOLDER = "::pick-folder::"
 
@@ -514,11 +515,14 @@ class OwnerWindow(QMainWindow):
             error_box(self, "Куда сохранить", "Выберите внизу окна, куда сохранить отчёт: флешку "
                       "или папку («Выбрать папку…»).")
             return
-        try:
-            check_password(self.settings["report_password"])
-        except ReportPasswordError as e:
-            error_box(self, "Пароль для отчётов", str(e))
-            return
+        from .stock_job import stock_settings  # noqa: PLC0415
+        encrypt = stock_settings(self.settings)["encrypt"]
+        if encrypt:
+            try:
+                check_password(self.settings["report_password"])
+            except ReportPasswordError as e:
+                error_box(self, "Пароль для отчётов", str(e))
+                return
         self.btn_stock.setEnabled(False)
         self.btn_stock.setText("Строю…")
         self.dot_stock.set("blue")
@@ -540,7 +544,14 @@ class OwnerWindow(QMainWindow):
                                    f"{len(data.stale)} поз. на {money(data.total)}, под заказ — "
                                    f"{len(data.ordered)}, выдано в ЗН — {len(data.issued)}")
             self._log("Построен отчёт по складу", f"позиций: {len(data.stale)}")
-            self._review_and_save(xlsx, stock_filename(data), "Отчёт по складу")
+            if encrypt:
+                self._review_and_save(xlsx, stock_filename(data), "Отчёт по складу")
+                return
+            self._log("Отчёт по складу открыт для проверки")
+            if preview.confirm_with_preview(self, xlsx, stock_filename(data), "сохранить отчёт"):
+                self._save_report(xlsx, stock_filename(data), "Отчёт по складу", encrypted=False)
+            else:
+                self._log("Сохранение отменено владельцем")
 
         run_in_background(lambda: build(self.settings), done)
 
@@ -571,8 +582,8 @@ class OwnerWindow(QMainWindow):
             return False
         return self._save_report(enc, name, what)
 
-    def _save_report(self, enc: bytes, name: str, what: str) -> bool:
-        """Записать уже зашифрованный отчёт на выбранную флешку или в папку."""
+    def _save_report(self, enc: bytes, name: str, what: str, encrypted: bool = True) -> bool:
+        """Записать отчёт (обычно уже зашифрованный) на выбранную флешку или в папку."""
         root = self._target()
         if not root:
             error_box(self, "Куда сохранить", "Не выбрано, куда сохранить отчёт — он не записан. "
@@ -583,11 +594,12 @@ class OwnerWindow(QMainWindow):
         except OSError as e:
             error_box(self, "Сохранение", f"Не удалось записать отчёт: {e}")
             return False
-        self._log(f"{what} сохранён (зашифрован)", f"{root} {target.name}")
-        QMessageBox.information(self, "Готово", f"Отчёт сохранён:\n{target}\n\nФайл зашифрован "
-                                "паролем для отчётов — Excel спросит его при открытии.\n\n"
-                                "Когда закончите, нажмите «Удалить отчётность», чтобы стереть "
-                                "данные из программы.")
+        self._log(f"{what} сохранён" + (" (зашифрован)" if encrypted else " (без пароля)"),
+                  f"{root} {target.name}")
+        note = ("Файл зашифрован паролем для отчётов — Excel спросит его при открытии.\n\n"
+                "Когда закончите, нажмите «Удалить отчётность», чтобы стереть данные из программы."
+                if encrypted else "Файл без пароля.")
+        QMessageBox.information(self, "Готово", f"Отчёт сохранён:\n{target}\n\n{note}")
         return True
 
     def open_book_file(self):

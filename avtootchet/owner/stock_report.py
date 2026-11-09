@@ -95,6 +95,14 @@ def build_stock_report(data: StockData) -> bytes:
     _summary(wb, "По менеджерам", "Залежавшиеся по тем, кто провёл приход",
              lambda r: r.author, data.stale, "Провёл (пользователь 1С)")
     _summary(wb, "По поставщикам", "Залежавшиеся по поставщикам", lambda r: r.supplier, data.stale, "Поставщик")
+    ws = wb.create_sheet("Группы")
+    row = _head(ws, "Группы номенклатуры", "«нет» — группа не учитывается (настройка «Не учитывать группы»), "
+                "вместе со своими подгруппами.")
+    if data.groups:
+        _table(ws, row, ["Группа", "Входит в группу", "В отчёте"],
+               [[g, p, "да" if on else "нет"] for g, p, on in data.groups], widths=[40, 40, 10], money=set())
+    else:
+        _cell(ws, row, 1, "Список групп не прочитан.", border=False)
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
