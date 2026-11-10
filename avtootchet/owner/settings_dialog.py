@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox,
+                               QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from ..common.crypto import new_secret
 from ..common.xlsx_crypto import MIN_PASSWORD
@@ -20,10 +20,20 @@ class OwnerSettingsDialog(QDialog):
         super().__init__(parent)
         self.s = settings
         self.setWindowTitle("Настройки")
-        self.setMinimumWidth(520)
-        lay = QVBoxLayout(self)
+        self.setMinimumWidth(720)
+        root = QVBoxLayout(self)
+        body = QHBoxLayout()
+        root.addLayout(body)
+        # разделы слева, содержимое справа
+        self.nav = QListWidget()
+        self.nav.setFixedWidth(190)
+        self.pages = QStackedWidget()
+        body.addWidget(self.nav)
+        body.addWidget(self.pages, 1)
+        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
 
-        # --- источник данных
+        # --- раздел «Подключение к 1С»
+        lay = self._page("Подключение к 1С")
         g = QGroupBox("Данные 1С")
         f = QFormLayout(g)
         self.source = QComboBox()
@@ -72,6 +82,17 @@ class OwnerSettingsDialog(QDialog):
         self.btn_test = QPushButton("Проверить подключение и показать кассы")
         self.btn_test.clicked.connect(self._test)
         f.addRow(self.btn_test)
+        lay.addWidget(g)
+
+        # --- раздел «Проверки базы»
+        lay = self._page("Проверки базы")
+        g = QGroupBox("Проверки структуры (только чтение, без сумм)")
+        f = QFormLayout(g)
+        hint = QLabel("Показывают, как устроена база, чтобы подстроить под неё отчёты. "
+                      "В результат попадают только названия и количества.")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        f.addRow(hint)
         self.btn_probe = QPushButton("Проверить структуру базы (без сумм)")
         self.btn_probe.setToolTip("Как в этой базе устроены оплаты: только количества и названия, "
                                   "без сумм и клиентов. За последние 31 день.")
@@ -91,6 +112,9 @@ class OwnerSettingsDialog(QDialog):
                             self.organization, self.cashboxes, self.oil_groups, self.suppliers,
                             self.btn_test, self.btn_probe, self.btn_stock, self.btn_process]
         lay.addWidget(g)
+
+        # --- раздел «Отчёты»
+        lay = self._page("Пароль отчётов")
 
         # --- пароль отчётов
         g = QGroupBox("Пароль для отчётов")
@@ -114,6 +138,7 @@ class OwnerSettingsDialog(QDialog):
         lay.addWidget(g)
 
         # --- утренний отчёт по складу
+        lay = self._page("Склад")
         st = settings["stock"]
         g = QGroupBox("Отчёт «Залежавшиеся запчасти»")
         f = QFormLayout(g)
@@ -159,6 +184,7 @@ class OwnerSettingsDialog(QDialog):
         lay.addWidget(g)
 
         # --- приём файлов
+        lay = self._page("Приём от бухгалтера")
         g = QGroupBox("Приём кассовой книги от бухгалтера")
         f = QFormLayout(g)
         self.port = QSpinBox()
@@ -187,10 +213,25 @@ class OwnerSettingsDialog(QDialog):
         buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        lay.addWidget(buttons)
+        root.addWidget(buttons)
+        self._finish_pages()
+        self.nav.setCurrentRow(0)
 
         self.source.currentIndexChanged.connect(self._toggle)
         self._toggle()
+
+    def _page(self, title: str) -> QVBoxLayout:
+        """Новый раздел настроек: пункт слева и страница справа."""
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.pages.addWidget(page)
+        self.nav.addItem(title)
+        return lay
+
+    def _finish_pages(self):
+        for i in range(self.pages.count()):
+            self.pages.widget(i).layout().addStretch(1)
 
     def _toggle(self):
         is_com = self.source.currentData() == "com"
