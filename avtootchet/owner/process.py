@@ -45,7 +45,8 @@ class Case:
     rating: float = 0.0
     refusal: str = ""
     from_rec: bool = False
-    recs: int = 0
+    recs: int = 0             # документов «Рекомендация», выписанных по этому ЗН
+    rec_text: bool = False    # в ЗН заполнено поле «Рекомендации» (текстом)
     plan_start: datetime | None = None
     plan_end: datetime | None = None
     events: dict = field(default_factory=dict)    # шаг -> (время, кто)
@@ -78,6 +79,7 @@ class ProcessData:
     stuck_days: int
     cases: list[Case]
     notes: list[str] = field(default_factory=list)     # что не удалось прочитать
+    recs_total: int | None = None                       # документов «Рекомендация» за период
 
     # ---------------------------------------------------------------- объёмы
     def by(self, key) -> list[tuple[str, int]]:
@@ -217,9 +219,12 @@ class ProcessData:
         return sorted(out, key=lambda x: -x[1])
 
     # ---------------------------------------------------------------- качество и продажи
-    def recommendations(self) -> tuple[int, int, int]:
-        """(ЗН с рекомендациями, всего рекомендаций, ЗН, созданных из рекомендации)."""
-        return (sum(1 for c in self.cases if c.recs), sum(c.recs for c in self.cases),
+    def recommendations(self) -> tuple[int, int, int, int]:
+        """(ЗН с текстом рекомендаций, документов «Рекомендация» за период,
+        из них привязаны к ЗН периода, ЗН, созданных из рекомендации)."""
+        linked = sum(c.recs for c in self.cases)
+        total = self.recs_total if self.recs_total is not None else linked
+        return (sum(1 for c in self.cases if c.rec_text), total, linked,
                 sum(1 for c in self.cases if c.from_rec))
 
     def repeats(self) -> int:
@@ -298,7 +303,8 @@ Q_ZN = """ВЫБРАТЬ
 	З.Повтор КАК Повтор,
 	З.Оценка КАК Оценка,
 	ПРЕДСТАВЛЕНИЕ(З.ПричинаОтказа) КАК Отказ,
-	ВЫБОР КОГДА З.ДокументОснование ССЫЛКА Документ.Рекомендация ТОГДА ИСТИНА ИНАЧЕ ЛОЖЬ КОНЕЦ КАК ИзРекомендации
+	ВЫБОР КОГДА З.ДокументОснование ССЫЛКА Документ.Рекомендация ТОГДА ИСТИНА ИНАЧЕ ЛОЖЬ КОНЕЦ КАК ИзРекомендации,
+	ВЫБОР КОГДА ВЫРАЗИТЬ(З.Рекомендации КАК СТРОКА(10)) <> "" ТОГДА ИСТИНА ИНАЧЕ ЛОЖЬ КОНЕЦ КАК ТекстРек
 ИЗ
 	Документ.ЗаказНаряд КАК З
 ГДЕ
@@ -325,6 +331,14 @@ LINKED = {
     PAID: ("ПриходДенег", "ДокументОснование"),
 }
 
+Q_RECS_ALL = """ВЫБРАТЬ
+	КОЛИЧЕСТВО(*) КАК Кол
+ИЗ
+	Документ.Рекомендация КАК Р
+ГДЕ
+	НЕ Р.ПометкаУдаления
+	И Р.Дата МЕЖДУ &Начало И &Конец"""
+
 Q_RECS = """ВЫБРАТЬ
 	ВЫРАЗИТЬ(Р.ДокументОснование КАК Документ.ЗаказНаряд).Номер КАК Номер,
 	КОЛИЧЕСТВО(*) КАК Кол
@@ -339,7 +353,7 @@ Q_RECS = """ВЫБРАТЬ
 
 ZN_COLS = ("Номер", "Дата", "Создан", "ВРаботе", "Завершен", "Отгружен", "ПланНачало", "ПланКонец",
            "Статус", "Тип", "Автор", "КтоВРаботу", "КтоЗавершил", "КтоОтгрузил", "Мастер", "Пост",
-           "Повтор", "Оценка", "Отказ", "ИзРекомендации")
+           "Повтор", "Оценка", "Отказ", "ИзРекомендации", "ТекстРек")
 
 
 def load_process(conn, d1: date, d2: date, on: date | None = None, stuck_days: int = 7) -> ProcessData:
@@ -362,6 +376,7 @@ def load_process(conn, d1: date, d2: date, on: date | None = None, stuck_days: i
         c = Case(_s(r["Номер"]), _dt(r["Дата"]) or created, _s(r["Статус"]), _s(r["Тип"]),
                  master=_s(r["Мастер"]), post=_s(r["Пост"]), repeat=bool(r["Повтор"]),
                  rating=_num(r["Оценка"]), refusal=_s(r["Отказ"]), from_rec=bool(r["ИзРекомендации"]),
+                 rec_text=bool(r["ТекстРек"]),
                  plan_start=_dt(r["ПланНачало"]), plan_end=_dt(r["ПланКонец"]))
         for step, col, who in ((CREATED, None, "Автор"), (WORK, "ВРаботе", "КтоВРаботу"),
                                (DONE, "Завершен", "КтоЗавершил"), (SHIPPED, "Отгружен", "КтоОтгрузил")):
@@ -387,6 +402,8 @@ def load_process(conn, d1: date, d2: date, on: date | None = None, stuck_days: i
             c = by_num.get(_s(r["Номер"]))
             if c:
                 c.recs = int(_num(r["Кол"]))
+        rows = run(Q_RECS_ALL, ("Кол",))
+        data.recs_total = int(_num(rows[0]["Кол"])) if rows else 0
     except Exception as e:  # noqa: BLE001
         data.notes.append(f"рекомендации: не прочитаны ({e})")
     return data

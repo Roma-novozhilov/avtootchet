@@ -27,6 +27,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame, KeepTogether, NextPageTemplate,
                                 PageBreak, PageTemplate, Paragraph, Spacer, Table, TableStyle)
+from reportlab.platypus.flowables import PageBreakIfNotEmpty
 from reportlab.platypus.tableofcontents import TableOfContents
 
 from .process import (CREATED, DONE, NOT_STARTED, PAID, SHIPPED, STAGES, WORK, ProcessData, fmt_hours)
@@ -180,7 +181,7 @@ class Builder:
             self.story.append(Paragraph(f"– {t}{end}", self.st["list"]))
 
     def struct(self, title: str, toc: bool = True):
-        self.story.append(PageBreak())
+        self.story.append(PageBreakIfNotEmpty())    # не оставлять пустую страницу
         para = Paragraph(title.upper(), self.st["struct"])
         if toc:
             para.toc_level, para.toc_text = 0, title.upper()
@@ -189,7 +190,7 @@ class Builder:
     def h1(self, title: str):
         self.sec += 1
         self.sub = 0
-        self.story.append(PageBreak())
+        self.story.append(PageBreakIfNotEmpty())
         para = Paragraph(f"{self.sec} {title}", self.st["h1"])
         para.toc_level, para.toc_text = 0, f"{self.sec} {title}"
         self.story.append(para)
@@ -230,12 +231,23 @@ class Builder:
         self.story.append(KeepTogether([Spacer(1, 4), drawing, cap]))
         return self.n_fig
 
+    def _hidden_steps(self) -> str:
+        d = self.d
+        n = len(d.cases) or 1
+        cnt = d.step_counts()
+        hidden = [s for s in d.step_order() if s != CREATED and cnt.get(s, 0) < MAP_MIN_SHARE * n]
+        if not hidden:
+            return ""
+        return (" Шаги " + ", ".join(f"«{s}» ({_n(cnt.get(s, 0))} ЗН)" for s in hidden) +
+                " встречаются реже чем у 5 % заказ-нарядов и на схему не вынесены.") if len(hidden) > 1 else (
+                f" Шаг «{hidden[0]}» есть только у {_n(cnt.get(hidden[0], 0))} ЗН и на схему не вынесен.")
+
     # ------------------------------------------------------------ рисунки
     def process_map(self) -> Drawing:
         d = self.d
-        order = d.step_order()
         counts = d.step_counts()
         n = len(d.cases) or 1
+        order = [s for s in d.step_order() if s == CREATED or counts.get(s, 0) >= MAP_MIN_SHARE * n]
         rows_tmp = {s: i for i, s in enumerate(order)}
         # на схеме - только заметные переходы (все переходы есть в таблице); дуг не больше 4 с каждой стороны
         trans, side = [], {"r": 0, "l": 0}
@@ -480,7 +492,7 @@ class Builder:
                "переходы с пропуском шагов, пунктирные слева — переходы в обратном порядке (например, "
                "запчасти выданы раньше перевода в работу). Чтобы схема читалась, на ней показаны переходы, "
                "которые есть не меньше чем у 5 % заказ-нарядов; все переходы приведены в таблице "
-               f"{self.n_tab + 2}.")
+               f"{self.n_tab + 2}." + self._hidden_steps())
         self.figure(self.process_map(), "Фактическая схема процесса обслуживания по заказ-наряду")
         vc = d.variant_count()
         top = d.variants(10)
@@ -517,8 +529,11 @@ class Builder:
             self.p(f"Не учтено {_n(bad_total)} значений, где второй шаг отмечен раньше первого — это "
                    "ошибки или исправления в учёте.")
         if chart_v:
-            self.figure(self.bars(chart_l, chart_v, lambda v: fmt_hours(v), True, 18 * mm + 13 * mm * len(chart_v)),
-                        "Медианная длительность этапов, ч")
+            days = max(chart_v) > 48
+            vals = [round(v / 24, 2) for v in chart_v] if days else chart_v
+            self.figure(self.bars(chart_l, vals, (lambda v: fmt_hours(v * 24)) if days else (lambda v: fmt_hours(v)),
+                                  True, 18 * mm + 13 * mm * len(chart_v)),
+                        "Медианная длительность этапов, " + ("дн." if days else "ч"))
         kinds = d.main_kinds()
         if len(kinds) > 1:
             self.h2("Длительность этапов по типам заказ-нарядов")
@@ -552,6 +567,11 @@ class Builder:
                f"считается только в сторону задержки (таблица {self.n_tab + 1}).")
         self.table("Плановые и фактические сроки", ["Событие", "ЗН", "В срок", "Медиана опоздания", "90 %"],
                    rows, [2, 0.8, 1.5, 1.4, 1])
+        s, ok, total = d.plan_fact("start")
+        if total and ok / total > 0.9 and s and s.p90 < 1:
+            self.p("Плановая дата начала почти всегда совпадает с фактической. Скорее всего, она "
+                   "проставляется в момент перевода заказ-наряда в работу, поэтому этот показатель "
+                   "соблюдение сроков записи не отражает.")
 
         # ---- 5 зависшие
         self.h1("Узкие места и зависшие заказ-наряды")
@@ -602,18 +622,34 @@ class Builder:
 
         # ---- 7 качество и продажи
         self.h1("Рекомендации, повторные обращения и отказы")
-        with_rec, recs, from_rec = d.recommendations()
+        text_rec, recs, linked, from_rec = d.recommendations()
         rep = d.repeats()
         rn, ravg = d.ratings()
-        self.table("Показатели качества и продаж", ["Показатель", "Значение"], [
-            ["ЗН, по которым выданы рекомендации", f"{_n(with_rec)} ({_pct(with_rec, n)})"],
-            ["Всего рекомендаций", _n(recs)],
-            ["ЗН, созданные по рекомендации", _n(from_rec)],
-            ["Рекомендаций, перешедших в ЗН", _pct(from_rec, recs) if recs else "—"],
+        rows = [
+            ["ЗН с заполненным полем «Рекомендации»", f"{_n(text_rec)} ({_pct(text_rec, n)})"],
+            ["Документов «Рекомендация» за период", _n(recs)],
+            ["ЗН, созданных на основании рекомендации", f"{_n(from_rec)} ({_pct(from_rec, n)})"],
             ["ЗН с отметкой «Повтор»", f"{_n(rep)} ({_pct(rep, n)})"],
-            ["ЗН с оценкой клиента", _n(rn)],
-            ["Средняя оценка", f"{ravg:.2f}".replace(".", ",") if ravg else "—"],
-        ], [3.5, 1.5])
+        ]
+        if rn:
+            rows += [["ЗН с оценкой клиента", _n(rn)], ["Средняя оценка", f"{ravg:.2f}".replace(".", ",")]]
+        self.p("Показатели рекомендаций и повторных обращений — в таблице "
+               f"{self.n_tab + 1}.")
+        self.table("Показатели качества и продаж", ["Показатель", "Значение"], rows, [3.5, 1.5])
+        if recs and from_rec <= recs:
+            self.p(f"На основании рекомендаций создано {_n(from_rec)} заказ-нарядов — "
+                   f"{_pct(from_rec, recs)} от числа рекомендаций за период.")
+        elif from_rec:
+            self.p(f"Заказ-нарядов, созданных на основании рекомендации ({_n(from_rec)}), больше, чем "
+                   f"рекомендаций, оформленных за период ({_n(recs)}): часть рекомендаций выписана раньше "
+                   "начала периода.")
+        if n and rep / n > 0.1:
+            self.p(f"Отметка «Повтор» стоит у {_pct(rep, n)} заказ-нарядов. Для повторных ремонтов по "
+                   "гарантии это много; вероятно, отметкой отмечают повторное обращение клиента "
+                   "вообще. Порядок её заполнения стоит уточнить, иначе показатель качества ремонта по "
+                   "ней не оценить.")
+        if not rn:
+            self.p("Оценки клиентов в заказ-нарядах не заполняются.")
         ref = d.refusals()
         if ref:
             total_ref = sum(v for _, v in ref)
@@ -675,8 +711,8 @@ class Builder:
         s, _ = d.stage(DONE, SHIPPED)
         if s:
             long = sum(1 for c in d.cases if (h := _gap(c, DONE, SHIPPED)) is not None and h > 24)
-            out.append(f"после завершения работ автомобиль выдаётся в среднем (медиана) через "
-                       f"{fmt_hours(s.median)}; дольше суток ждали выдачи {_n(long)} заказ-нарядов")
+            out.append(f"медиана ожидания выдачи после завершения работ — {fmt_hours(s.median)}, но "
+                       f"{_n(long)} заказ-нарядов ждали выдачи дольше суток")
         for title, which in (("начала", "start"), ("завершения", "end")):
             st, ok, total = d.plan_fact(which)
             if total:
@@ -687,10 +723,11 @@ class Builder:
         if sum(wd):
             out.append(f"больше всего заказ-нарядов создаётся в {_day_name(wd.index(max(wd)))} "
                        f"({_n(max(wd))} за период)")
-        with_rec, recs, from_rec = d.recommendations()
-        if recs:
-            out.append(f"из {_n(recs)} рекомендаций в новые заказ-наряды перешло {_n(from_rec)} "
-                       f"({_pct(from_rec, recs)})")
+        _, recs, _, from_rec = d.recommendations()
+        if from_rec:
+            out.append(f"на основании рекомендаций создано {_n(from_rec)} заказ-нарядов "
+                       f"({_pct(from_rec, n)} всех)" + (f" при {_n(recs)} рекомендациях за период"
+                                                         if recs >= from_rec else ""))
         return out
 
     def _proposals(self, stuck) -> list[str]:
