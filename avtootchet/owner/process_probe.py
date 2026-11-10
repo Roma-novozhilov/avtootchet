@@ -7,7 +7,7 @@
 
 Проверяет:
   1. журнал регистрации 1С (папка 1Cv8Log): формат, за какой период хранится, размер;
-  2. какие события пишутся в журнал (выборка за последние сутки): виды событий и объекты;
+  2. какие уровни событий пишутся в журнал;
   3. сколько документов каждого вида за период - какие шаги процесса вообще есть в базе;
   4. заказ-наряд: реквизиты-даты, статусы (перечисления) и как они заполнены;
   5. связи документов: какой документ на какой ссылается (шапка и табличные части);
@@ -138,33 +138,8 @@ class ProcessProbe(Probe):
             out.append(f"уровни, которые пишутся: {', '.join(levels) or '(никакие)'}")
         except Exception as e:  # noqa: BLE001
             out.append(f"уровень журнала не прочитан: {e}")
-        table = self.conn.NewObject("ТаблицаЗначений")
-        flt = self.conn.NewObject("Структура")
-        start = datetime.combine(self.d2, datetime.min.time()) - timedelta(days=1)
-        flt.Insert("НачалоПериода", start)
-        _call(self.conn, "ВыгрузитьЖурналРегистрации", "UnloadEventLog", args=(table, flt))
-        n = int(_call(table, "Count", "Количество"))
-        out.append(f"записей за сутки с {start:%d.%m.%Y %H:%M}: {n}")
-        events, objects, users = {}, {}, set()
-        for i in range(n):
-            row = _call(table, "Get", "Получить", args=(i,))
-            ev = self._s(_prop(row, "Событие", "Event"))
-            events[ev] = events.get(ev, 0) + 1
-            try:
-                obj = self._s(_prop(row, "Метаданные", "Metadata"))
-            except AttributeError:
-                obj = "—"
-            if obj and obj not in ("—", "(пусто)"):
-                objects[obj] = objects.get(obj, 0) + 1
-            try:
-                users.add(str(_prop(row, "ИмяПользователя", "UserName")))
-            except AttributeError:
-                pass
-        out.append(f"разных пользователей: {len(users)}")
-        out.append("виды событий:")
-        out += [f"  {k}: {v}" for k, v in sorted(events.items(), key=lambda kv: -kv[1])[:MAX_LINES]]
-        out.append("объекты (метаданные):")
-        out += [f"  {k}: {v}" for k, v in sorted(objects.items(), key=lambda kv: -kv[1])[:MAX_LINES]]
+        # Выгрузку журнала через 1С (ВыгрузитьЖурналРегистрации) НЕ делаем: на журнале в 13 ГБ она
+        # съела 18 ГБ памяти сервера. Содержимое журнала будем читать из файлов, по частям.
         return out
 
     # ---------------------------------------------------------------- 3. документы за период
@@ -270,7 +245,7 @@ class ProcessProbe(Probe):
         self.lines = [f"Данные для анализа процессов, документы за {self.d1:%d.%m.%Y}–{self.d2:%d.%m.%Y}",
                       "Только названия и количества — без сумм, клиентов, номеров и имён пользователей."]
         self._section("1. Журнал регистрации 1С: формат, период хранения, размер", self.log_folder)
-        self._section("2. Журнал регистрации: что в него пишется (выборка за сутки)", self.log_sample)
+        self._section("2. Журнал регистрации: какие уровни событий пишутся", self.log_sample)
         self._section("3. Документы за период: всего / проведено / сколько разных авторов и ответственных", self.documents)
         self._section("4. Заказ-наряд: реквизиты, даты и статусы", self.order)
         self._section("5. Связи документов: реквизит → на какие документы ссылается (сколько документов)",
