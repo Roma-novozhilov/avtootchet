@@ -57,7 +57,7 @@ def fake_base(n=400, seed=7):
                "Автор": rnd.choice(users), "КтоВРаботу": "", "КтоЗавершил": "", "КтоОтгрузил": "",
                "Мастер": rnd.choice(masters), "Пост": rnd.choice(["Пост 1", "Пост 2", "Шиномонтаж"]),
                "Повтор": rnd.random() < 0.03, "Оценка": rnd.choice([0, 0, 0, 5, 4]),
-               "Отказ": "", "ИзРекомендации": rnd.random() < 0.06}
+               "Отказ": "", "ИзРекомендации": rnd.random() < 0.06, "ТекстРек": rnd.random() < 0.3}
         r = rnd.random()
         if r < 0.06:
             row["Отказ"] = rnd.choice(["", "Дорого", "Не приехал"])
@@ -100,6 +100,8 @@ class Conn:
             return self.base["out"]
         if "Документ.ПриходДенег" in text:
             return self.base["pay"]
+        if "Документ.Рекомендация" in text and "Р.Дата МЕЖДУ" in text:
+            return [{"Кол": 60}]
         if "Документ.Рекомендация" in text:
             return self.base["recs"]
         raise AssertionError(text)
@@ -120,8 +122,8 @@ s, bad = data.stage(P.CREATED, P.WORK)
 assert s and s.n == filled[P.WORK] and s.median > 0
 assert data.stuck(), "есть незакрытые ЗН старше 7 дней"
 assert sum(data.weekday_load()) == n
-with_rec, recs, from_rec = data.recommendations()
-assert with_rec and recs >= with_rec
+text_rec, recs, linked, from_rec = data.recommendations()
+assert text_rec and recs == 60 and linked and from_rec
 assert P.fmt_hours(0.5) == "30 мин" and P.fmt_hours(5.25) == "5,2 ч" and P.fmt_hours(72) == "3,0 дн."
 
 # пустые даты 1С (01.01.0001) - не шаг
@@ -134,6 +136,14 @@ assert process_filename(data) == "Анализ процессов 12.05.2026-10.
 if len(sys.argv) > 1:
     Path(sys.argv[1]).write_bytes(pdf)
     print("PDF:", sys.argv[1])
+
+# редкий шаг (как «Запчасти пришли» у 2 % ЗН в настоящей базе) не выносится на схему
+from avtootchet.owner.process_pdf import Builder  # noqa: E402
+for c in data.cases[5:]:
+    c.events.pop(P.PARTS_IN, None)
+b = Builder(data, "Авто Центр", "Иваново")
+assert "«Запчасти пришли»" in b._hidden_steps() and "не вынесен" in b._hidden_steps()
+assert build_process_pdf(data)[:5] == b"%PDF-"
 
 # пустая база не роняет отчёт
 empty = P.ProcessData(date(2026, 5, 12), date(2026, 11, 10), date(2026, 11, 10), 7, [])
