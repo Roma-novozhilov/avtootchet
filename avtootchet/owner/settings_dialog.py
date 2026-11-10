@@ -11,6 +11,7 @@ from ..common.xlsx_crypto import MIN_PASSWORD
 from ..common.ui import run_in_background
 from .probe import run_probe
 from .stock_probe import run_stock_probe
+from .process_probe import run_process_probe
 from .sources import ComSource
 
 
@@ -81,9 +82,14 @@ class OwnerSettingsDialog(QDialog):
                                   "только названия и количества, без сумм и номенклатуры. За 31 день.")
         self.btn_stock.clicked.connect(self._stock_probe)
         f.addRow(self.btn_stock)
+        self.btn_process = QPushButton("Проверить данные для анализа процессов (без сумм)")
+        self.btn_process.setToolTip("Журнал регистрации, статусы и даты заказ-нарядов, связи документов: "
+                                    "только названия и количества, без сумм, клиентов и имён. За 6 месяцев.")
+        self.btn_process.clicked.connect(self._process_probe)
+        f.addRow(self.btn_process)
         self.com_widgets = [self.server, self.base, self.user, self.password, self.platform,
                             self.organization, self.cashboxes, self.oil_groups, self.suppliers,
-                            self.btn_test, self.btn_probe, self.btn_stock]
+                            self.btn_test, self.btn_probe, self.btn_stock, self.btn_process]
         lay.addWidget(g)
 
         # --- пароль отчётов
@@ -246,6 +252,20 @@ class OwnerSettingsDialog(QDialog):
             TextDialog("Структура склада", text, self).exec()
 
         run_in_background(lambda: run_stock_probe(self._com_source()), done)
+
+    def _process_probe(self):
+        self.btn_process.setEnabled(False)
+        self.btn_process.setText("Проверяю… (до нескольких минут)")
+
+        def done(text, err):
+            self.btn_process.setEnabled(True)
+            self.btn_process.setText("Проверить данные для анализа процессов (без сумм)")
+            if err:
+                QMessageBox.critical(self, "1С", str(err))
+                return
+            TextDialog("Данные для анализа процессов", text, self).exec()
+
+        run_in_background(lambda: run_process_probe(self._com_source()), done)
 
     def _pick_stock_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Папка утреннего отчёта", self.stock_folder.text())
