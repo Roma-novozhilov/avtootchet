@@ -183,6 +183,34 @@ class OwnerSettingsDialog(QDialog):
         f.addRow(hint)
         lay.addWidget(g)
 
+        # --- анализ процессов
+        lay = self._page("Анализ процессов")
+        from .process_job import process_settings  # noqa: PLC0415
+        ps = process_settings(settings)
+        g = QGroupBox("Отчёт «Анализ процессов» (PDF по ГОСТ 7.32)")
+        f = QFormLayout(g)
+        self.proc_months = QSpinBox()
+        self.proc_months.setRange(1, 36)
+        self.proc_months.setValue(ps["months"])
+        self.proc_months.setSuffix(" мес.")
+        f.addRow("Период:", self.proc_months)
+        self.proc_stuck = QSpinBox()
+        self.proc_stuck.setRange(1, 365)
+        self.proc_stuck.setValue(ps["stuck_days"])
+        self.proc_stuck.setSuffix(" дн.")
+        f.addRow("Зависшим считать ЗН через:", self.proc_stuck)
+        self.proc_org = QLineEdit(ps["org"])
+        f.addRow("Организация (титульный лист):", self.proc_org)
+        self.proc_city = QLineEdit(ps["city"])
+        f.addRow("Город:", self.proc_city)
+        hint = QLabel("Схема процесса строится по заказ-нарядам за последние месяцы: даты создания, "
+                      "перевода в работу, завершения, выдачи, а также приходы запчастей, выдача запчастей "
+                      "и оплаты. Отчёт сохраняется туда же, куда остальные отчёты.")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        f.addRow(hint)
+        lay.addWidget(g)
+
         # --- приём файлов
         lay = self._page("Приём от бухгалтера")
         g = QGroupBox("Приём кассовой книги от бухгалтера")
@@ -343,6 +371,8 @@ class OwnerSettingsDialog(QDialog):
                            "encrypt": self.stock_encrypt.isChecked(),
                            "exclude": self.stock_exclude.text().strip(),
                            "folder": self.stock_folder.text().strip()}
+        self.s["process"] = {"months": self.proc_months.value(), "stuck_days": self.proc_stuck.value(),
+                             "org": self.proc_org.text().strip(), "city": self.proc_city.text().strip()}
         self.s["port"] = self.port.value()
         self.s["secret"] = self.secret.text().strip()
         self.s.save()

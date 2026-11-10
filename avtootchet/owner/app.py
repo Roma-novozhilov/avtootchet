@@ -52,6 +52,8 @@ DEFAULTS = {
     "stock": {"folder": r"F:\Отчёты\Склад", "days": 14, "months": 6,
               "exclude": "Расходные, Слесарные, Инструмент, Хозяйствен, Канцеляр, Спецодежд, Уборк, Вода",
               "article": "", "encrypt": False},
+    # отчёт «Анализ процессов» (process_job.py): PDF по ГОСТ 7.32
+    "process": {"months": 6, "stuck_days": 7, "org": "Авто Центр Минеево", "city": "Иваново"},
 }
 PICK_FOLDER = "::pick-folder::"
 
@@ -215,6 +217,20 @@ class OwnerWindow(QMainWindow):
         r4.addWidget(self.lbl_stock, 1)
         r4.addWidget(self.btn_stock)
         grid.addLayout(r4)
+        r5 = QHBoxLayout()
+        self.dot_proc = StatusDot()
+        self.lbl_proc = QLabel("Процессы: схема обслуживания по заказ-нарядам, сроки этапов, узкие места")
+        self.lbl_proc.setWordWrap(True)
+        self.btn_proc = QPushButton("Анализ процессов (PDF)")
+        self.btn_proc.setMinimumWidth(190)
+        self.btn_proc.setToolTip("Фактическая схема процесса по заказ-нарядам за последние месяцы, "
+                                 "длительность этапов, план/факт, зависшие ЗН, нагрузка — отчёт PDF "
+                                 "по ГОСТ 7.32. Только чтение из 1С.")
+        self.btn_proc.clicked.connect(self.process_report)
+        r5.addWidget(self.dot_proc)
+        r5.addWidget(self.lbl_proc, 1)
+        r5.addWidget(self.btn_proc)
+        grid.addLayout(r5)
         self.lbl_net = QLabel()
         self.lbl_net.setObjectName("hint")
         grid.addWidget(self.lbl_net)
@@ -552,6 +568,42 @@ class OwnerWindow(QMainWindow):
                 self._save_report(xlsx, stock_filename(data), "Отчёт по складу", encrypted=False)
             else:
                 self._log("Сохранение отменено владельцем")
+
+        run_in_background(lambda: build(self.settings), done)
+
+    def process_report(self):
+        from .process_job import build  # noqa: PLC0415
+        from .process_pdf import process_filename  # noqa: PLC0415
+        if not isinstance(make_source(self.settings), ComSource):
+            error_box(self, "Анализ процессов", "Отчёт строится только из 1С:Далион: "
+                      "в «Настройках» выберите источник «1С:Далион через COM».")
+            return
+        if not self._target():
+            error_box(self, "Куда сохранить", "Выберите внизу окна, куда сохранить отчёт: флешку "
+                      "или папку («Выбрать папку…»).")
+            return
+        self.btn_proc.setEnabled(False)
+        self.btn_proc.setText("Строю…")
+        self.dot_proc.set("blue")
+        self.lbl_proc.setText("Процессы: читаю заказ-наряды и связанные документы из 1С…")
+
+        def done(result, err):
+            self.btn_proc.setEnabled(True)
+            self.btn_proc.setText("Анализ процессов (PDF)")
+            if err:
+                self.dot_proc.set("red")
+                self.lbl_proc.setText(f"Процессы: ошибка — {err}")
+                self._log("Ошибка анализа процессов", type(err).__name__)
+                if not isinstance(err, SourceError):
+                    error_box(self, "1С", f"Не удалось построить отчёт: {err}")
+                return
+            data, pdf = result
+            stuck = len(data.stuck())
+            self.dot_proc.set("yellow" if stuck else "green")
+            self.lbl_proc.setText(f"Процессы {data.d1:%d.%m.%Y}–{data.d2:%d.%m.%Y}: заказ-нарядов "
+                                  f"{len(data.cases)}, зависших — {stuck}")
+            self._log("Построен анализ процессов", f"ЗН: {len(data.cases)}")
+            self._save_report(pdf, process_filename(data), "Анализ процессов", encrypted=False)
 
         run_in_background(lambda: build(self.settings), done)
 
