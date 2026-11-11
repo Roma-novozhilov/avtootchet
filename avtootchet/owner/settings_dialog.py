@@ -12,6 +12,7 @@ from ..common.ui import run_in_background
 from .probe import run_probe
 from .stock_probe import run_stock_probe
 from .process_probe import run_process_probe
+from .crm_probe import run_crm_probe
 from .sources import ComSource
 
 
@@ -108,9 +109,14 @@ class OwnerSettingsDialog(QDialog):
                                     "только названия и количества, без сумм, клиентов и имён. За 6 месяцев.")
         self.btn_process.clicked.connect(self._process_probe)
         f.addRow(self.btn_process)
+        self.btn_crm = QPushButton("Проверить структуру CRM и звонков (без телефонов)")
+        self.btn_crm.setToolTip("Заявки, задачи, лиды, «Простые звонки»: какие есть объекты и поля, сколько записей "
+                                "за 30 дней. Без телефонов, клиентов и имён.")
+        self.btn_crm.clicked.connect(self._crm_probe)
+        f.addRow(self.btn_crm)
         self.com_widgets = [self.server, self.base, self.user, self.password, self.platform,
                             self.organization, self.cashboxes, self.oil_groups, self.suppliers,
-                            self.btn_test, self.btn_probe, self.btn_stock, self.btn_process]
+                            self.btn_test, self.btn_probe, self.btn_stock, self.btn_process, self.btn_crm]
         lay.addWidget(g)
 
         # --- раздел «Отчёты»
@@ -335,6 +341,20 @@ class OwnerSettingsDialog(QDialog):
             TextDialog("Данные для анализа процессов", text, self).exec()
 
         run_in_background(lambda: run_process_probe(self._com_source()), done)
+
+    def _crm_probe(self):
+        self.btn_crm.setEnabled(False)
+        self.btn_crm.setText("Проверяю… (до нескольких минут)")
+
+        def done(text, err):
+            self.btn_crm.setEnabled(True)
+            self.btn_crm.setText("Проверить структуру CRM и звонков (без телефонов)")
+            if err:
+                QMessageBox.critical(self, "1С", str(err))
+                return
+            TextDialog("Структура CRM и звонков", text, self).exec()
+
+        run_in_background(lambda: run_crm_probe(self._com_source()), done)
 
     def _pick_stock_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Папка утреннего отчёта", self.stock_folder.text())
