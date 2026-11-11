@@ -54,6 +54,7 @@ DEFAULTS = {
               "article": "", "encrypt": False},
     # отчёт «Анализ процессов» (process_job.py): PDF по ГОСТ 7.32
     "process": {"months": 6, "stuck_days": 7, "org": "Авто Центр Минеево", "city": "Иваново"},
+    "app_lock": {},          # пароль на вход (common/app_lock.py): соль и отпечаток, не сам пароль
 }
 PICK_FOLDER = "::pick-folder::"
 
@@ -824,6 +825,9 @@ def main():
     updated = updater.after_start()
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE)
+    from ..common.app_lock import unlock  # noqa: PLC0415
+    if not unlock(Settings("owner", DEFAULTS), "АвтоОтчёт — владелец"):
+        sys.exit(0)
     w = OwnerWindow()
     if updated:
         w._log("Программа обновлена", f"версия {__version__}")
