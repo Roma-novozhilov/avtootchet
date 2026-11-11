@@ -1,10 +1,9 @@
 """Настройки программы владельца."""
 from __future__ import annotations
 
-from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox,
-                               QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
+                               QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from ..common.crypto import new_secret
 from ..common.xlsx_crypto import MIN_PASSWORD
@@ -12,6 +11,8 @@ from ..common.ui import run_in_background
 from .probe import run_probe
 from .stock_probe import run_stock_probe
 from .process_probe import run_process_probe
+from .crm_probe import run_crm_probe
+from ..common.text_dialog import TextDialog  # noqa: F401 - используется и снаружи
 from .sources import ComSource
 
 
@@ -108,13 +109,33 @@ class OwnerSettingsDialog(QDialog):
                                     "только названия и количества, без сумм, клиентов и имён. За 6 месяцев.")
         self.btn_process.clicked.connect(self._process_probe)
         f.addRow(self.btn_process)
+        self.btn_crm = QPushButton("Проверить структуру CRM и звонков (без телефонов)")
+        self.btn_crm.setToolTip("Заявки, задачи, лиды, «Простые звонки»: какие есть объекты и поля, сколько записей "
+                                "за 30 дней. Без телефонов, клиентов и имён.")
+        self.btn_crm.clicked.connect(self._crm_probe)
+        f.addRow(self.btn_crm)
         self.com_widgets = [self.server, self.base, self.user, self.password, self.platform,
                             self.organization, self.cashboxes, self.oil_groups, self.suppliers,
-                            self.btn_test, self.btn_probe, self.btn_stock, self.btn_process]
+                            self.btn_test, self.btn_probe, self.btn_stock, self.btn_process, self.btn_crm]
         lay.addWidget(g)
 
         # --- раздел «Отчёты»
-        lay = self._page("Пароль отчётов")
+        lay = self._page("Пароли")
+
+        # --- пароль на вход в программу
+        g = QGroupBox("Пароль на вход в программу")
+        f = QFormLayout(g)
+        from ..common import app_lock  # noqa: PLC0415
+        self.lock_state = QLabel()
+        self.btn_lock = QPushButton("Задать / сменить пароль…")
+        self.btn_lock.clicked.connect(self._app_password)
+        f.addRow(self.lock_state)
+        f.addRow(self.btn_lock)
+        self._lock_label = lambda: self.lock_state.setText(
+            "Пароль задан: программа спрашивает его при запуске." if app_lock.is_set(self.s)
+            else "Пароль не задан: программа открывается без пароля.")
+        self._lock_label()
+        lay.addWidget(g)
 
         # --- пароль отчётов
         g = QGroupBox("Пароль для отчётов")
@@ -336,6 +357,25 @@ class OwnerSettingsDialog(QDialog):
 
         run_in_background(lambda: run_process_probe(self._com_source()), done)
 
+    def _app_password(self):
+        from ..common.app_lock import SetPasswordDialog  # noqa: PLC0415
+        SetPasswordDialog(self.s, self).exec()
+        self._lock_label()
+
+    def _crm_probe(self):
+        self.btn_crm.setEnabled(False)
+        self.btn_crm.setText("Проверяю… (до нескольких минут)")
+
+        def done(text, err):
+            self.btn_crm.setEnabled(True)
+            self.btn_crm.setText("Проверить структуру CRM и звонков (без телефонов)")
+            if err:
+                QMessageBox.critical(self, "1С", str(err))
+                return
+            TextDialog("Структура CRM и звонков", text, self).exec()
+
+        run_in_background(lambda: run_crm_probe(self._com_source()), done)
+
     def _pick_stock_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Папка утреннего отчёта", self.stock_folder.text())
         if path:
@@ -377,36 +417,3 @@ class OwnerSettingsDialog(QDialog):
         self.s["secret"] = self.secret.text().strip()
         self.s.save()
         self.accept()
-
-
-class TextDialog(QDialog):
-    """Текст с кнопкой «Скопировать» (через удалённый стол копируется на свой компьютер)."""
-
-    def __init__(self, title: str, text: str, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(760, 560)
-        lay = QVBoxLayout(self)
-        hint = QLabel("Только количества и названия, без сумм и клиентов. Нажмите «Скопировать» "
-                      "и вставьте текст в чат.")
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
-        self.text = QPlainTextEdit(text)
-        self.text.setReadOnly(True)
-        lay.addWidget(self.text, 1)
-        row = QHBoxLayout()
-        row.addStretch()
-        copy = QPushButton("Скопировать")
-        copy.setObjectName("primary")
-        copy.clicked.connect(self._copy)
-        row.addWidget(copy)
-        close = QPushButton("Закрыть")
-        close.clicked.connect(self.accept)
-        row.addWidget(close)
-        lay.addLayout(row)
-        self.copy_btn = copy
-
-    def _copy(self):
-        QGuiApplication.clipboard().setText(self.text.toPlainText())
-        self.copy_btn.setText("Скопировано ✓")

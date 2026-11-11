@@ -18,10 +18,15 @@ echo === Сборка программы бухгалтера ===
 ".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onefile --windowed ^
     --name AvtoOtchet-Buhgalter accountant_main.py || goto :error
 
+echo === Сборка программы маркетолога ===
+".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onefile --windowed ^
+    --name AvtoOtchet-Marketing --hidden-import win32timezone marketing_main.py || goto :error
+
 echo.
 echo Готово! Программы лежат в папке dist:
 echo   AvtoOtchet-Vladelec.exe  - на ПК владельца
 echo   AvtoOtchet-Buhgalter.exe - на ПК бухгалтера
+echo   AvtoOtchet-Marketing.exe - маркетологу (только CRM и звонки)
 pause
 exit /b 0
 
