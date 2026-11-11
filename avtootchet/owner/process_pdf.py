@@ -527,7 +527,7 @@ class Builder:
                          fmt_hours(s.mean if s else None), fmt_hours(s.p90 if s else None)])
             if s and title != STAGES[3][0]:
                 chart_l.append(title.split(" (")[0])
-                chart_v.append(round(s.median, 2))
+                chart_v.append(s.median)
         self.p("Длительность этапа — время между двумя шагами одного заказ-наряда. Для каждого этапа "
                "приведены число заказ-нарядов, медиана, среднее и 90-й процентиль (таблица "
                f"{self.n_tab + 1}). Среднее больше медианы, когда есть отдельные очень долгие случаи.")
@@ -538,7 +538,7 @@ class Builder:
                    "ошибки или исправления в учёте.")
         if chart_v:
             days = max(chart_v) > 48
-            vals = [round(v / 24, 2) for v in chart_v] if days else chart_v
+            vals = [v / 24 for v in chart_v] if days else chart_v
             self.figure(self.bars(chart_l, vals, (lambda v: fmt_hours(v * 24)) if days else (lambda v: fmt_hours(v)),
                                   True, 18 * mm + 13 * mm * len(chart_v)),
                         "Медианная длительность этапов, " + ("дн." if days else "ч"))
@@ -634,7 +634,8 @@ class Builder:
         rep = d.repeats()
         rn, ravg = d.ratings()
         rows = [
-            ["ЗН с заполненным полем «Рекомендации»", f"{_n(text_rec)} ({_pct(text_rec, n)})"],
+            *([["ЗН с заполненным полем «Рекомендации»", f"{_n(text_rec)} ({_pct(text_rec, n)})"]]
+              if text_rec < 0.8 * n else []),     # почти везде заполнено - похоже на шаблонный текст
             ["Документов «Рекомендация» за период", _n(recs)],
             ["ЗН, созданных на основании рекомендации", f"{_n(from_rec)} ({_pct(from_rec, n)})"],
             ["ЗН с отметкой «Повтор» (второй ЗН в том же заезде)", f"{_n(rep)} ({_pct(rep, n)})"],
