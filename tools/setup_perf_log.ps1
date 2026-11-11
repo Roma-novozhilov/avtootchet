@@ -1,4 +1,6 @@
-﻿# Запись производительности сервера каждые 5 секунд, чтобы поймать зависания 1С.
+﻿# Запись производительности сервера каждые 5 секунд. При каждом запуске (в т.ч. после
+# перезагрузки сервера) - новый файл с датой и временем в имени, старые не затираются.
+#, чтобы поймать зависания 1С.
 # Встроенное средство Windows (logman), нагрузка ничтожная. Пишет по кругу: старое
 # затирается, файл не больше 1 ГБ (это примерно 1-2 недели).
 # Запуск: PowerShell от имени администратора ->
@@ -57,7 +59,7 @@ $paths | Set-Content -Path $cfg -Encoding Unicode
 
 logman stop $name 2>$null | Out-Null
 logman delete $name 2>$null | Out-Null
-logman create counter $name -cf $cfg -si 00:00:05 -f bincirc -max 1024 -o (Join-Path $dir 'perf') -ow | Out-Host
+logman create counter $name -cf $cfg -si 00:00:05 -f bincirc -max 1024 -o (Join-Path $dir 'perf') -v mmddhhmm | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'logman create не сработал' }
 logman start $name | Out-Host
 
