@@ -94,7 +94,8 @@ class Conn:
         assert "&Начало" not in text, "даты подставляются литералом"
         if "Документ.ЗаказНаряд КАК З" in text:
             return self.base["zn"]
-        if "Документ.ПриходнаяНакладная" in text:
+        if "РегистрНакопления.ОстаткиТоваров" in text:
+            assert "ПриходнаяНакладная.Товары" in text and "ДатаСоздания" in text
             return self.base["in"]
         if "Документ.ВнутренняяНакладная" in text:
             return self.base["out"]
@@ -125,6 +126,8 @@ assert sum(data.weekday_load()) == n
 text_rec, recs, linked, from_rec = data.recommendations()
 assert text_rec and recs == 60 and linked and from_rec
 assert P.fmt_hours(0.5) == "30 мин" and P.fmt_hours(5.25) == "5,2 ч" and P.fmt_hours(72) == "3,0 дн."
+
+assert data.visits() == n - data.repeats()
 
 # пустые даты 1С (01.01.0001) - не шаг
 c0 = next(c for c in data.cases if c.status == "Предварительный")
