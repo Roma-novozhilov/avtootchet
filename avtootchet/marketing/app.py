@@ -7,10 +7,15 @@
 """
 from __future__ import annotations
 
+import os
 import sys
+from datetime import date, timedelta
+from pathlib import Path
 
-from PySide6.QtWidgets import (QApplication, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                               QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QDate
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDateEdit, QFileDialog, QFormLayout, QGroupBox,
+                               QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from .. import __version__
 from ..common import app_lock, updater
@@ -21,11 +26,14 @@ from ..common.update_ui import UpdateController
 from ..owner.crm_probe import run_crm_probe
 from ..common.text_dialog import TextDialog
 from ..owner.sources import ComSource, SourceError
+from .export import Directions, load_export, save_export
 
 TITLE = "АвтоОтчёт — маркетинг"
 DEFAULTS = {
     "com": {"server": r"C:\1C\Dalion", "base": "", "user": "", "password": "", "platform": ""},
     "app_lock": {},
+    # выгрузка для витрины; коды направлений звонков - из проверки структуры CRM (раздел 3)
+    "export": {"folder": "", "csv": True, "json": True, "phones": False, "in_codes": "", "out_codes": ""},
 }
 
 
@@ -46,7 +54,7 @@ class MarketingWindow(QMainWindow):
         self.settings = Settings("marketing", DEFAULTS)
         self.journal = Journal("marketing")
         self.setWindowTitle(f"{TITLE}  v{__version__}")
-        self.resize(640, 420)
+        self.resize(700, 860)
         root = QWidget()
         lay = QVBoxLayout(root)
         lay.setContentsMargins(16, 12, 16, 12)
@@ -100,9 +108,125 @@ class MarketingWindow(QMainWindow):
         hint.setWordWrap(True)
         v.addWidget(hint)
         lay.addWidget(g)
+        lay.addWidget(self._export_box())
         lay.addStretch()
         self.setCentralWidget(root)
         self._log("Программа открыта")
+
+    # ------------------------------------------------------------ выгрузка
+    def _export_box(self) -> QGroupBox:
+        e = self.settings["export"]
+        g = QGroupBox("Выгрузка для витрины (CSV / JSON)")
+        f = QFormLayout(g)
+        row = QHBoxLayout()
+        self.d1, self.d2 = QDateEdit(), QDateEdit()
+        for w in (self.d1, self.d2):
+            w.setCalendarPopup(True)
+            w.setDisplayFormat("dd.MM.yyyy")
+        self._set_period(7)
+        row.addWidget(self.d1)
+        row.addWidget(QLabel("—"))
+        row.addWidget(self.d2)
+        for text, days in (("Вчера", 1), ("7 дней", 7), ("30 дней", 30)):
+            b = QPushButton(text)
+            b.clicked.connect(lambda _=False, d=days: self._set_period(d))
+            row.addWidget(b)
+        row.addStretch()
+        f.addRow("Период:", row)
+        frow = QHBoxLayout()
+        self.folder = QLineEdit(e.get("folder") or str(Path.home() / "Documents" / "Выгрузки CRM"))
+        pick = QPushButton("…")
+        pick.setFixedWidth(32)
+        pick.clicked.connect(self._pick_folder)
+        frow.addWidget(self.folder, 1)
+        frow.addWidget(pick)
+        f.addRow("Папка:", frow)
+        opts = QHBoxLayout()
+        self.fmt_csv = QCheckBox("CSV (Excel)")
+        self.fmt_csv.setChecked(bool(e.get("csv", True)))
+        self.fmt_json = QCheckBox("JSON")
+        self.fmt_json.setChecked(bool(e.get("json", True)))
+        self.phones = QCheckBox("с номерами телефонов")
+        self.phones.setChecked(bool(e.get("phones", False)))
+        for w in (self.fmt_csv, self.fmt_json, self.phones):
+            opts.addWidget(w)
+        opts.addStretch()
+        f.addRow("Формат:", opts)
+        codes = QHBoxLayout()
+        self.in_codes = QLineEdit(e.get("in_codes", ""))
+        self.in_codes.setPlaceholderText("входящие, напр. 1")
+        self.out_codes = QLineEdit(e.get("out_codes", ""))
+        self.out_codes.setPlaceholderText("исходящие, напр. 2")
+        codes.addWidget(self.in_codes)
+        codes.addWidget(self.out_codes)
+        f.addRow("Коды звонков:", codes)
+        self.btn_export = QPushButton("Выгрузить")
+        self.btn_export.setObjectName("primary")
+        self.btn_export.clicked.connect(self._export)
+        f.addRow(self.btn_export)
+        hint = QLabel("Листы: звонки (пропущен, перезвонили и через сколько), задачи (выполнено, просрочено), "
+                      "заявки — заказ-наряды без сумм, клиенты, менеджеры. Номера телефонов только если "
+                      "отмечено: это персональные данные клиентов.")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        f.addRow(hint)
+        return g
+
+    def _set_period(self, days: int):
+        end = date.today() - timedelta(days=1) if days == 1 else date.today()
+        start = end - timedelta(days=days - 1)
+        self.d1.setDate(QDate(start.year, start.month, start.day))
+        self.d2.setDate(QDate(end.year, end.month, end.day))
+
+    def _pick_folder(self):
+        d = QFileDialog.getExistingDirectory(self, "Папка для выгрузки", self.folder.text())
+        if d:
+            self.folder.setText(d)
+
+    def _export(self):
+        d1, d2 = self.d1.date().toPython(), self.d2.date().toPython()
+        if d1 > d2:
+            QMessageBox.warning(self, TITLE, "Дата «с» позже даты «по».")
+            return
+        if not (self.fmt_csv.isChecked() or self.fmt_json.isChecked()):
+            QMessageBox.warning(self, TITLE, "Отметьте хотя бы один формат: CSV или JSON.")
+            return
+        self.settings["export"] = {"folder": self.folder.text().strip(), "csv": self.fmt_csv.isChecked(),
+                                   "json": self.fmt_json.isChecked(), "phones": self.phones.isChecked(),
+                                   "in_codes": self.in_codes.text().strip(),
+                                   "out_codes": self.out_codes.text().strip()}
+        self.settings.save()
+        dirs = Directions.parse(self.in_codes.text(), self.out_codes.text())
+        folder = Path(self.folder.text().strip())
+        src = self._src()
+        csv_on, json_on, phones = self.fmt_csv.isChecked(), self.fmt_json.isChecked(), self.phones.isChecked()
+        self._busy(self.btn_export, "Выгружаю…")
+
+        def work():
+            src._check_settings()
+            ex = load_export(src._connect(), d1, d2, dirs, phones)
+            return ex, save_export(ex, folder, csv_on, json_on)
+
+        def done(result, err):
+            self._busy(self.btn_export, None)
+            if err:
+                QMessageBox.critical(self, "Выгрузка", str(err))
+                self._log("Выгрузка CRM: ошибка", type(err).__name__)
+                return
+            ex, files = result
+            missed = sum(1 for c in ex.calls if c["пропущен"] == "да")
+            self._log("Выгрузка CRM", f"{d1:%d.%m.%Y}-{d2:%d.%m.%Y}: звонков {len(ex.calls)}")
+            box = QMessageBox(self)
+            box.setWindowTitle("Выгрузка готова")
+            box.setText(f"Звонков: {len(ex.calls)} (пропущено {missed}), задач: {len(ex.tasks)}, "
+                        f"заявок: {len(ex.requests)}.\n\nПапка: {files[0].parent if files else folder}")
+            open_btn = box.addButton("Открыть папку", QMessageBox.AcceptRole)
+            box.addButton("Закрыть", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is open_btn and files and hasattr(os, "startfile"):
+                os.startfile(files[0].parent)  # noqa: S606 - своя папка с выгрузкой
+
+        run_in_background(work, done)
 
     def _log(self, what: str, details: str = ""):
         self.journal.write(what, details)
