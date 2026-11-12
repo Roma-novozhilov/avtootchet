@@ -68,7 +68,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           AVTO_NO_OPEN: "1"
-        run: python tests/updater_check.py && python tests/comdate_check.py && python tests/probe_check.py && python tests/revenue_check.py && python tests/layout_check.py && python tests/stock_probe_check.py && python tests/stock_check.py && python tests/process_probe_check.py && python tests/process_check.py && python tests/crm_probe_check.py && python tests/marketing_check.py && python tests/e2e_check.py
+        run: python tests/updater_check.py && python tests/comdate_check.py && python tests/probe_check.py && python tests/revenue_check.py && python tests/layout_check.py && python tests/stock_probe_check.py && python tests/stock_check.py && python tests/process_probe_check.py && python tests/process_check.py && python tests/crm_probe_check.py && python tests/marketing_check.py && python tests/marketing_export_check.py && python tests/e2e_check.py
 
       - name: Сборка
         if: steps.ver.outputs.skip != 'true'
