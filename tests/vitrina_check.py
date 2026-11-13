@@ -200,5 +200,16 @@ for _ in range(5):
     req("/api/login", {"password": "x"})
 assert req("/api/login", {"password": "owner-pass"})[0] == 429
 httpd.shutdown()
+
+# сайт без файла данных: вход работает, meta говорит «данных нет», разделы - 503
+empty = App(Store(tmp / "nope.db"), {"owner": make_lock("owner-pass")}, ROOT / "avtootchet" / "vitrina" / "web")
+httpd = serve(empty, "127.0.0.1", 0)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+base = f"http://127.0.0.1:{httpd.server_address[1]}"
+ck = login("owner-pass")
+code, body, _ = req("/api/meta", cookie=ck)
+assert code == 200 and json.loads(body)["meta"]["nodata"], body
+assert req("/api/home", cookie=ck)[0] == 503
+httpd.shutdown()
 print("сайт: OK")
 print("Витрина: все проверки прошли")
