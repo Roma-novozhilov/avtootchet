@@ -22,11 +22,16 @@ echo === Сборка программы маркетолога ===
 ".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onefile --windowed ^
     --name AvtoOtchet-Marketing --hidden-import win32timezone marketing_main.py || goto :error
 
+echo === Сборка витрины ===
+".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onefile --windowed ^
+    --name AvtoOtchet-Vitrina --hidden-import win32timezone --add-data "avtootchet\vitrina\web;avtootchet\vitrina\web" vitrina_main.py || goto :error
+
 echo.
 echo Готово! Программы лежат в папке dist:
 echo   AvtoOtchet-Vladelec.exe  - на ПК владельца
 echo   AvtoOtchet-Buhgalter.exe - на ПК бухгалтера
 echo   AvtoOtchet-Marketing.exe - маркетологу (только CRM и звонки)
+echo   AvtoOtchet-Vitrina.exe   - на сервер: сайт-витрина (сбор в 6:00 + сайт)
 pause
 exit /b 0
 
