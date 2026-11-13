@@ -5,12 +5,12 @@
 #
 #   powershell -ExecutionPolicy Bypass -File setup_stock_task.ps1 -Exe "C:\...\AvtoOtchet-Vladelec.exe"
 #
-# Параметры: -Time "09:00" (время запуска), -ShortcutFor "Администратор" (на чьём рабочем столе ярлык).
+# Параметры: -Time "07:30" (время запуска; до прихода сотрудников - в 9:00 отчёт мешал работе в Далионе), -ShortcutFor "Администратор" (на чьём рабочем столе ярлык).
 # Пароль Windows спросит сама команда schtasks: он нужен, чтобы отчёт строился, даже когда
 # никто не вошёл в систему. В скрипте и в чате пароль не хранится.
 param(
     [Parameter(Mandatory = $true)][string]$Exe,
-    [string]$Time = "09:00",
+    [string]$Time = "07:30",
     [string]$ShortcutFor = "Администратор"
 )
 $ErrorActionPreference = "Stop"
