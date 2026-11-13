@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QDate
-from PySide6.QtWidgets import (QApplication, QCheckBox, QDateEdit, QFileDialog, QFormLayout, QGroupBox,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDateEdit, QFileDialog, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
                                QVBoxLayout, QWidget)
 
@@ -21,7 +21,7 @@ from .. import __version__
 from ..common import app_lock, updater
 from ..common.journal import Journal
 from ..common.settings import Settings
-from ..common.ui import STYLE, run_in_background
+from ..common.ui import STYLE, form_layout, run_in_background, short_spin, show_start, tool_button
 from ..common.update_ui import UpdateController
 from ..owner.crm_probe import run_crm_probe
 from ..common.text_dialog import TextDialog
@@ -32,8 +32,9 @@ TITLE = "АвтоОтчёт — маркетинг"
 DEFAULTS = {
     "com": {"server": r"C:\1C\Dalion", "base": "", "user": "", "password": "", "platform": ""},
     "app_lock": {},
-    # выгрузка для витрины; коды направлений звонков - из проверки структуры CRM (раздел 3)
-    "export": {"folder": "", "csv": True, "json": True, "phones": False, "in_codes": "", "out_codes": ""},
+    # выгрузка для витрины. Коды «НаправлениеЗвонка» Далиона: 0 - входящий, 1 - исходящий
+    # (по первой выгрузке 07-13.11.2026: у кода 0 городская линия и почти все пропущенные)
+    "export": {"folder": "", "csv": True, "json": True, "phones": False, "in_codes": "0", "out_codes": "1"},
 }
 
 
@@ -54,7 +55,7 @@ class MarketingWindow(QMainWindow):
         self.settings = Settings("marketing", DEFAULTS)
         self.journal = Journal("marketing")
         self.setWindowTitle(f"{TITLE}  v{__version__}")
-        self.resize(700, 860)
+        self.resize(720, 760)
         root = QWidget()
         lay = QVBoxLayout(root)
         lay.setContentsMargins(16, 12, 16, 12)
@@ -66,24 +67,25 @@ class MarketingWindow(QMainWindow):
         top.addStretch()
         self.updates = UpdateController(self, log=self._log)
         top.addWidget(self.updates.button)
-        btn_pw = QPushButton("Пароль программы…")
+        btn_pw = QPushButton("🔒  Пароль программы…")
         btn_pw.clicked.connect(lambda: app_lock.SetPasswordDialog(self.settings, self).exec())
         top.addWidget(btn_pw)
         lay.addLayout(top)
 
         c = self.settings["com"]
         g = QGroupBox("Подключение к 1С:Далион (под вашим пользователем Далиона)")
-        f = QFormLayout(g)
+        f = form_layout(g)
         self.server = QLineEdit(c["server"])
         self.user = QLineEdit(c["user"])
         self.password = QLineEdit(c["password"])
         self.password.setEchoMode(QLineEdit.Password)
         self.platform = QLineEdit(c["platform"])
-        self.platform.setPlaceholderText("например 8.3.27.2325; пусто - как установлено")
+        self.platform.setPlaceholderText("например 8.3.27.2325; пусто — как установлено")
         f.addRow("Путь к базе:", self.server)
         f.addRow("Пользователь Далиона:", self.user)
         f.addRow("Пароль Далиона:", self.password)
         f.addRow("Версия платформы:", self.platform)
+        show_start(self.server)
         row = QHBoxLayout()
         save = QPushButton("Сохранить")
         save.clicked.connect(self._save)
@@ -95,20 +97,25 @@ class MarketingWindow(QMainWindow):
         f.addRow(row)
         lay.addWidget(g)
 
-        g = QGroupBox("Данные CRM")
+        lay.addWidget(self._export_box())
+
+        g = QGroupBox("Проверка структуры (если что-то в выгрузке не так)")
         v = QVBoxLayout(g)
         self.btn_crm = QPushButton("Проверить структуру CRM и звонков (без телефонов)")
-        self.btn_crm.setObjectName("primary")
         self.btn_crm.clicked.connect(self._crm)
-        v.addWidget(self.btn_crm)
-        hint = QLabel("Показывает, какие в Далионе есть заявки, задачи, лиды и звонки и как заполнены их поля "
-                      "за 30 дней — только названия и количества. По результату будет сделана выгрузка для "
-                      "витрины. Программа только читает данные Далиона и ничего в нём не меняет.")
+        row = QHBoxLayout()
+        row.addWidget(self.btn_crm)
+        row.addStretch()
+        v.addLayout(row)
+        hint = QLabel("Какие в Далионе есть заявки, задачи, лиды и звонки и как заполнены их поля за 30 дней — "
+                      "только названия и количества. Результат можно скопировать и отправить разработчику.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         v.addWidget(hint)
         lay.addWidget(g)
-        lay.addWidget(self._export_box())
+        note = QLabel("Программа только читает данные Далиона и ничего в нём не меняет.")
+        note.setObjectName("hint")
+        lay.addWidget(note)
         lay.addStretch()
         self.setCentralWidget(root)
         self._log("Программа открыта")
@@ -117,12 +124,13 @@ class MarketingWindow(QMainWindow):
     def _export_box(self) -> QGroupBox:
         e = self.settings["export"]
         g = QGroupBox("Выгрузка для витрины (CSV / JSON)")
-        f = QFormLayout(g)
+        f = form_layout(g)
         row = QHBoxLayout()
         self.d1, self.d2 = QDateEdit(), QDateEdit()
         for w in (self.d1, self.d2):
             w.setCalendarPopup(True)
             w.setDisplayFormat("dd.MM.yyyy")
+            short_spin(w)
         self._set_period(7)
         row.addWidget(self.d1)
         row.addWidget(QLabel("—"))
@@ -135,8 +143,8 @@ class MarketingWindow(QMainWindow):
         f.addRow("Период:", row)
         frow = QHBoxLayout()
         self.folder = QLineEdit(e.get("folder") or str(Path.home() / "Documents" / "Выгрузки CRM"))
-        pick = QPushButton("…")
-        pick.setFixedWidth(32)
+        show_start(self.folder)
+        pick = tool_button("…", "Выбрать папку")
         pick.clicked.connect(self._pick_folder)
         frow.addWidget(self.folder, 1)
         frow.addWidget(pick)
@@ -153,20 +161,24 @@ class MarketingWindow(QMainWindow):
         opts.addStretch()
         f.addRow("Формат:", opts)
         codes = QHBoxLayout()
-        self.in_codes = QLineEdit(e.get("in_codes", ""))
-        self.in_codes.setPlaceholderText("входящие, напр. 1")
-        self.out_codes = QLineEdit(e.get("out_codes", ""))
-        self.out_codes.setPlaceholderText("исходящие, напр. 2")
-        codes.addWidget(self.in_codes)
-        codes.addWidget(self.out_codes)
+        # пустые коды из старых настроек (до 0.8.2) - берём известные
+        self.in_codes = QLineEdit(e.get("in_codes") or DEFAULTS["export"]["in_codes"])
+        self.out_codes = QLineEdit(e.get("out_codes") or DEFAULTS["export"]["out_codes"])
+        for w, label in ((self.in_codes, "входящие:"), (self.out_codes, "исходящие:")):
+            w.setMaximumWidth(80)
+            w.setToolTip("Код «НаправлениеЗвонка» в «Простых звонках». В Далионе: 0 — входящий, 1 — исходящий.")
+            codes.addWidget(QLabel(label))
+            codes.addWidget(w)
+        codes.addStretch()
         f.addRow("Коды звонков:", codes)
         self.btn_export = QPushButton("Выгрузить")
         self.btn_export.setObjectName("primary")
         self.btn_export.clicked.connect(self._export)
         f.addRow(self.btn_export)
-        hint = QLabel("Листы: звонки (пропущен, перезвонили и через сколько), задачи (выполнено, просрочено), "
-                      "заявки — заказ-наряды без сумм, клиенты, менеджеры. Номера телефонов только если "
-                      "отмечено: это персональные данные клиентов.")
+        hint = QLabel("Файлы: звонки (пропущен, перезвонили и через сколько), задачи (выполнено, просрочено), "
+                      "заявки — заказ-наряды без сумм, клиенты, менеджеры. Номера телефонов — только если "
+                      "отмечено: это персональные данные клиентов, в облачные сервисы их без согласия не "
+                      "загружать.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         f.addRow(hint)

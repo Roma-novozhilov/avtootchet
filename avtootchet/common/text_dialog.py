@@ -1,7 +1,7 @@
 """Окно с текстом и кнопкой «Скопировать» (результаты проверок структуры базы)."""
 from __future__ import annotations
 
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFontDatabase, QGuiApplication
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
 
 
@@ -13,13 +13,14 @@ class TextDialog(QDialog):
         self.setWindowTitle(title)
         self.resize(760, 560)
         lay = QVBoxLayout(self)
-        hint = QLabel("Только количества и названия, без сумм и клиентов. Нажмите «Скопировать» "
-                      "и вставьте текст в чат.")
+        hint = QLabel("Только количества и названия — без сумм, клиентов и телефонов. Нажмите «Скопировать» "
+                      "и вставьте текст в сообщение разработчику.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
         self.text = QPlainTextEdit(text)
         self.text.setReadOnly(True)
+        self.text.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))   # таблицы «a | b | c» ровно
         lay.addWidget(self.text, 1)
         row = QHBoxLayout()
         row.addStretch()

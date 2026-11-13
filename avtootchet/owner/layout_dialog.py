@@ -127,7 +127,7 @@ class ReportLayoutDialog(QDialog):
             return
         _fill(self.cols, self.layout_data["columns"][table])
         shared = [s for s, t in COLUMNS_OF_SHEET.items() if t == table and s != table]
-        extra = f" (так же — {', '.join('«' + s + '»' for s in shared)})" if shared else ""
+        extra = f" (те же колонки у {', '.join('«' + s + '»' for s in shared)})" if shared else ""
         self.cols_title.setText(f"Колонки листа «{table}»{extra}:")
 
     def _sheet_selected(self, current, _previous):

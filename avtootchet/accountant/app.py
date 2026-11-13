@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDialog,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
                                QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
@@ -22,7 +22,7 @@ from ..common.settings import Settings
 from ..common.transfer import DEFAULT_PORT, TransferError, discover_owner, send_file
 from ..common import updater
 from ..common.update_ui import UpdateController
-from ..common.ui import STYLE, StatusDot, run_in_background
+from ..common.ui import STYLE, StatusDot, form_layout, run_in_background, short_spin, show_start
 
 DEFAULTS = {"owner_host": "", "port": DEFAULT_PORT, "secret": "", "last_file": ""}
 
@@ -35,12 +35,13 @@ class AccountantSettingsDialog(QDialog):
         self.setMinimumWidth(440)
         lay = QVBoxLayout(self)
         g = QGroupBox("ПК владельца")
-        f = QFormLayout(g)
+        f = form_layout(g)
         self.host = QLineEdit(settings["owner_host"])
         self.host.setPlaceholderText("пусто = найти автоматически")
         self.port = QSpinBox()
         self.port.setRange(1024, 65535)
         self.port.setValue(settings["port"])
+        short_spin(self.port)
         self.secret = QLineEdit(settings["secret"])
         self.secret.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
         self.btn_find = QPushButton("Найти")
@@ -128,6 +129,7 @@ class AccountantWindow(QMainWindow):
         row = QHBoxLayout(g)
         self.path = QLineEdit(self.settings["last_file"])
         self.path.setPlaceholderText("Выберите файл .xlsx")
+        show_start(self.path)
         self.path.textChanged.connect(self._update)
         pick = QPushButton("Выбрать…")
         pick.clicked.connect(self.pick_file)
@@ -146,6 +148,7 @@ class AccountantWindow(QMainWindow):
 
         st = QHBoxLayout()
         self.dot = StatusDot()
+        self.dot.hide()                  # точка появляется вместе с результатом отправки
         self.status = QLabel("")
         self.status.setWordWrap(True)
         self.status.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -176,8 +179,14 @@ class AccountantWindow(QMainWindow):
             self.lbl_target.setText(f"Получатель: ПК владельца {host}, порт {self.settings['port']}")
         else:
             self.lbl_target.setText("Получатель: ПК владельца найдётся автоматически при отправке")
-        p = Path(self.path.text().strip())
-        self.btn_send.setEnabled(bool(secret) and p.suffix.lower() in (".xlsx", ".xlsm") and p.is_file())
+        text = self.path.text().strip()
+        p = Path(text)
+        ok_file = p.suffix.lower() in (".xlsx", ".xlsm") and p.is_file()
+        if secret and text and not ok_file:
+            self.lbl_target.setText("⚠ Файл не найден или это не файл Excel (.xlsx / .xlsm) — выберите его заново")
+        elif secret and not text:
+            self.lbl_target.setText(self.lbl_target.text() + " · выберите файл кассовой книги")
+        self.btn_send.setEnabled(bool(secret) and ok_file)
 
     def open_settings(self):
         if AccountantSettingsDialog(self.settings, self).exec():
@@ -195,6 +204,7 @@ class AccountantWindow(QMainWindow):
         self.settings["last_file"] = str(src)
         self.settings.save()
         self.btn_send.setEnabled(False)
+        self.dot.show()
         self.dot.set("blue")
         self.status.setText("Отправляю…")
 
