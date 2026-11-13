@@ -278,6 +278,9 @@ class VitrinaWindow(QMainWindow):
         if not (self.settings["site"].get("owner_lock") or {}).get("hash"):
             QMessageBox.warning(self, TITLE, "Сначала задайте пароль владельца.")
             return
+        if not runner.data_file(self.settings).exists():
+            QMessageBox.information(self, TITLE, "Данных витрины ещё нет: сайт откроется, но покажет пустую "
+                                                 "страницу. Сначала нажмите «Собрать данные сейчас».")
         self._start(demo=False)
 
     def _demo(self):
