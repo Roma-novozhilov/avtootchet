@@ -1,13 +1,13 @@
 """Настройки программы владельца."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox,
                                QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)
 
 from ..common.crypto import new_secret
 from ..common.xlsx_crypto import MIN_PASSWORD
-from ..common.ui import run_in_background
+from ..common.ui import form_layout, run_in_background, short_spin, show_start, tool_button
 from .probe import run_probe
 from .stock_probe import run_stock_probe
 from .process_probe import run_process_probe
@@ -27,7 +27,8 @@ class OwnerSettingsDialog(QDialog):
         root.addLayout(body)
         # разделы слева, содержимое справа
         self.nav = QListWidget()
-        self.nav.setFixedWidth(190)
+        self.nav.setObjectName("nav")
+        self.nav.setFixedWidth(200)
         self.pages = QStackedWidget()
         body.addWidget(self.nav)
         body.addWidget(self.pages, 1)
@@ -36,7 +37,7 @@ class OwnerSettingsDialog(QDialog):
         # --- раздел «Подключение к 1С»
         lay = self._page("Подключение к 1С")
         g = QGroupBox("Данные 1С")
-        f = QFormLayout(g)
+        f = form_layout(g)
         self.source = QComboBox()
         self.source.addItem("Демо — файл выгрузки учебной базы", "demo")
         self.source.addItem("1С:Далион через COM", "com")
@@ -44,8 +45,7 @@ class OwnerSettingsDialog(QDialog):
         f.addRow("Источник:", self.source)
 
         self.demo_file = QLineEdit(settings["demo_file"])
-        pick = QPushButton("…")
-        pick.setFixedWidth(32)
+        pick = tool_button("…", "Выбрать файл выгрузки")
         pick.clicked.connect(self._pick_demo)
         row = QHBoxLayout()
         row.addWidget(self.demo_file)
@@ -80,6 +80,7 @@ class OwnerSettingsDialog(QDialog):
                          ("Организация:", self.organization), ("Кассы:", self.cashboxes),
                          ("Группы масла:", self.oil_groups), ("Основные поставщики:", self.suppliers)):
             f.addRow(label, w)
+        show_start(self.demo_file, self.server, self.suppliers)
         self.btn_test = QPushButton("Проверить подключение и показать кассы")
         self.btn_test.clicked.connect(self._test)
         f.addRow(self.btn_test)
@@ -88,9 +89,10 @@ class OwnerSettingsDialog(QDialog):
         # --- раздел «Проверки базы»
         lay = self._page("Проверки базы")
         g = QGroupBox("Проверки структуры (только чтение, без сумм)")
-        f = QFormLayout(g)
+        f = form_layout(g)
         hint = QLabel("Показывают, как устроена база, чтобы подстроить под неё отчёты. "
-                      "В результат попадают только названия и количества.")
+                      "В результат попадают только названия и количества. Работают, когда в разделе "
+                      "«Подключение к 1С» выбран источник «1С:Далион через COM».")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         f.addRow(hint)
@@ -119,12 +121,12 @@ class OwnerSettingsDialog(QDialog):
                             self.btn_test, self.btn_probe, self.btn_stock, self.btn_process, self.btn_crm]
         lay.addWidget(g)
 
-        # --- раздел «Отчёты»
+        # --- раздел «Пароли»
         lay = self._page("Пароли")
 
         # --- пароль на вход в программу
         g = QGroupBox("Пароль на вход в программу")
-        f = QFormLayout(g)
+        f = form_layout(g)
         from ..common import app_lock  # noqa: PLC0415
         self.lock_state = QLabel()
         self.btn_lock = QPushButton("Задать / сменить пароль…")
@@ -132,14 +134,16 @@ class OwnerSettingsDialog(QDialog):
         f.addRow(self.lock_state)
         f.addRow(self.btn_lock)
         self._lock_label = lambda: self.lock_state.setText(
-            "Пароль задан: программа спрашивает его при запуске." if app_lock.is_set(self.s)
-            else "Пароль не задан: программа открывается без пароля.")
+            ("Пароль задан: программа спрашивает его при запуске." if app_lock.is_set(self.s)
+             else "Пароль не задан: программа открывается без пароля.")
+            + " Меняется сразу, кнопка «Отмена» внизу его не возвращает.")
+        self.lock_state.setWordWrap(True)
         self._lock_label()
         lay.addWidget(g)
 
         # --- пароль отчётов
         g = QGroupBox("Пароль для отчётов")
-        f = QFormLayout(g)
+        f = form_layout(g)
         self.rep_pass = QLineEdit(settings["report_password"])
         self.rep_pass.setEchoMode(QLineEdit.Password)
         self.rep_pass2 = QLineEdit(settings["report_password"])
@@ -162,22 +166,25 @@ class OwnerSettingsDialog(QDialog):
         lay = self._page("Склад")
         st = settings["stock"]
         g = QGroupBox("Отчёт «Залежавшиеся запчасти»")
-        f = QFormLayout(g)
+        f = form_layout(g)
         self.stock_days = QSpinBox()
         self.stock_days.setRange(1, 365)
         self.stock_days.setValue(int(st.get("days") or 14))
         self.stock_days.setSuffix(" дн.")
+        short_spin(self.stock_days)
         f.addRow("Лежат дольше:", self.stock_days)
         self.stock_months = QSpinBox()
         self.stock_months.setRange(0, 120)
         self.stock_months.setValue(int(st.get("months", 6) or 0))
         self.stock_months.setSuffix(" мес.")
         self.stock_months.setSpecialValueText("за всё время")
+        short_spin(self.stock_months, 150)
         f.addRow("Приходы за последние:", self.stock_months)
         from .stock_job import stock_settings  # noqa: PLC0415
         sst = stock_settings(settings)
         self.stock_exclude = QLineEdit(sst["exclude"])
         self.stock_exclude.setPlaceholderText("слова через запятую: Расходные, Инструмент")
+        show_start(self.stock_exclude)
         f.addRow("Не учитывать группы:", self.stock_exclude)
         self.stock_article = QLineEdit(st.get("article", ""))
         self.stock_article.setPlaceholderText("пусто — найти автоматически")
@@ -186,8 +193,7 @@ class OwnerSettingsDialog(QDialog):
         self.stock_encrypt.setChecked(sst["encrypt"])
         f.addRow("", self.stock_encrypt)
         self.stock_folder = QLineEdit(st.get("folder", ""))
-        pick = QPushButton("…")
-        pick.setFixedWidth(32)
+        pick = tool_button("…", "Выбрать папку")
         pick.clicked.connect(self._pick_stock_folder)
         row = QHBoxLayout()
         row.addWidget(self.stock_folder)
@@ -209,22 +215,24 @@ class OwnerSettingsDialog(QDialog):
         from .process_job import process_settings  # noqa: PLC0415
         ps = process_settings(settings)
         g = QGroupBox("Отчёт «Анализ процессов» (PDF по ГОСТ 7.32)")
-        f = QFormLayout(g)
+        f = form_layout(g)
         self.proc_months = QSpinBox()
         self.proc_months.setRange(1, 36)
         self.proc_months.setValue(ps["months"])
         self.proc_months.setSuffix(" мес.")
+        short_spin(self.proc_months)
         f.addRow("Период:", self.proc_months)
         self.proc_stuck = QSpinBox()
         self.proc_stuck.setRange(1, 365)
         self.proc_stuck.setValue(ps["stuck_days"])
         self.proc_stuck.setSuffix(" дн.")
-        f.addRow("Зависшим считать ЗН через:", self.proc_stuck)
+        short_spin(self.proc_stuck)
+        f.addRow("ЗН считается зависшим через:", self.proc_stuck)
         self.proc_org = QLineEdit(ps["org"])
         f.addRow("Организация (титульный лист):", self.proc_org)
         self.proc_city = QLineEdit(ps["city"])
         f.addRow("Город:", self.proc_city)
-        hint = QLabel("Схема процесса строится по заказ-нарядам за последние месяцы: даты создания, "
+        hint = QLabel("Схема процесса строится по заказ-нарядам за указанный период: даты создания, "
                       "перевода в работу, завершения, выдачи, а также приходы запчастей, выдача запчастей "
                       "и оплаты. Отчёт сохраняется туда же, куда остальные отчёты.")
         hint.setObjectName("hint")
@@ -235,10 +243,11 @@ class OwnerSettingsDialog(QDialog):
         # --- приём файлов
         lay = self._page("Приём от бухгалтера")
         g = QGroupBox("Приём кассовой книги от бухгалтера")
-        f = QFormLayout(g)
+        f = form_layout(g)
         self.port = QSpinBox()
         self.port.setRange(1024, 65535)
         self.port.setValue(settings["port"])
+        short_spin(self.port)
         f.addRow("Порт:", self.port)
         self.secret = QLineEdit(settings["secret"])
         gen = QPushButton("Новый код")

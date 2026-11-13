@@ -88,15 +88,15 @@ class PreviewDialog(QDialog):
                  encrypted: bool = False):
         super().__init__(parent)
         self.preview = preview
-        self.setWindowTitle("Проверка перед отправкой")
+        self.setWindowTitle("Проверка отчёта")
         self.setMinimumWidth(480)
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         lay = QVBoxLayout(self)
         text = QLabel(
             f"<b>Отчёт открыт в Excel.</b><br><br>Проверьте, что всё построено верно, и выберите, "
-            f"что сделать: <b>{action}</b> или не отправлять.<br><br>"
-            "Будет отправлен отчёт в том виде, как его построила программа: правки в Excel "
-            "в отправку не попадут."
+            f"что сделать: <b>{action}</b> или отменить.<br><br>"
+            "Будет использован отчёт в том виде, как его построила программа: правки, сделанные "
+            "в Excel, в него не попадут."
             + ("<br><br>Файл уже зашифрован: Excel спросит <b>пароль для отчётов</b>. Копия через "
                "«Сохранить как» тоже будет с паролем." if encrypted else ""))
         text.setWordWrap(True)
@@ -110,10 +110,10 @@ class PreviewDialog(QDialog):
         again.clicked.connect(self._open)
         row.addWidget(again)
         row.addStretch()
-        self.btn_no = QPushButton("Не отправлять")
+        self.btn_no = QPushButton("Отмена")
         self.btn_no.clicked.connect(self.reject)
         row.addWidget(self.btn_no)
-        self.btn_yes = QPushButton("Отправить")
+        self.btn_yes = QPushButton(action[:1].upper() + action[1:])
         self.btn_yes.setObjectName("primary")
         self.btn_yes.clicked.connect(self.accept)
         row.addWidget(self.btn_yes)
@@ -131,7 +131,7 @@ def _ask(parent: QWidget | None, preview: PreviewFile, action: str, encrypted: b
 
 def confirm_with_preview(parent: QWidget | None, data: bytes, filename: str,
                          action: str = "отправить", encrypted: bool = False) -> bool:
-    """Показать отчёт в Excel и спросить владельца. True = «Отправить».
+    """Показать отчёт в Excel и спросить владельца. True = кнопка действия (action).
     encrypted - data уже зашифрован (так показывает программа владельца)."""
     pf = PreviewFile(data, filename)
     try:

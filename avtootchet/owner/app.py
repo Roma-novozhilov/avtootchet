@@ -26,7 +26,7 @@ from ..common.transfer import DEFAULT_PORT, DiscoveryResponder, Receiver, local_
 from ..common import preview, updater
 from ..common.update_ui import UpdateController
 from ..common.xlsx_crypto import ReportPasswordError, check_password, encrypt_xlsx
-from ..common.ui import STYLE, StatusDot, error_box, money, run_in_background
+from ..common.ui import STYLE, StatusDot, error_box, money, run_in_background, short_spin
 from .cashbook_parser import BookParseError, parse_cashbook
 from .drives import in_remote_session, removable_drives, write_to_drive
 from .reconcile import ERROR, CheckResult, reconcile
@@ -130,7 +130,7 @@ class OwnerWindow(QMainWindow):
         lay.setSpacing(10)
 
         top = QHBoxLayout()
-        title = QLabel("Проверка кассовой книги")
+        title = QLabel("Отчёты по 1С и проверка кассы")
         title.setObjectName("title")
         top.addWidget(title)
         top.addStretch()
@@ -171,7 +171,7 @@ class OwnerWindow(QMainWindow):
         self.lbl_1c = QLabel()
         self.btn_load = QPushButton("Получить данные из 1С")
         self.btn_load.clicked.connect(self.load_1c)
-        r1.addWidget(self.dot_1c)
+        r1.addWidget(self.dot_1c, 0, Qt.AlignVCenter)
         r1.addWidget(self.lbl_1c, 1)
         r1.addWidget(self.btn_load)
         grid.addLayout(r1)
@@ -181,7 +181,7 @@ class OwnerWindow(QMainWindow):
         self.lbl_book.setWordWrap(True)
         self.btn_open_book = QPushButton("Открыть файл вручную…")
         self.btn_open_book.clicked.connect(self.open_book_file)
-        r2.addWidget(self.dot_book)
+        r2.addWidget(self.dot_book, 0, Qt.AlignVCenter)
         r2.addWidget(self.lbl_book, 1)
         r2.addWidget(self.btn_open_book)
         grid.addLayout(r2)
@@ -195,7 +195,7 @@ class OwnerWindow(QMainWindow):
         self.btn_revenue.setToolTip("Забрать оплаты из 1С, построить лист выручки, показать его "
                                     "в Excel для проверки и сохранить (зашифрованным) на флешку или в папку")
         self.btn_revenue.clicked.connect(self.revenue_report)
-        r3.addWidget(self.dot_rev)
+        r3.addWidget(self.dot_rev, 0, Qt.AlignVCenter)
         r3.addWidget(self.lbl_rev, 1)
         self.btn_layout = QPushButton("Состав отчёта…")
         self.btn_layout.setToolTip("Какие листы и колонки войдут в отчёт по выручке и в каком порядке")
@@ -214,7 +214,7 @@ class OwnerWindow(QMainWindow):
                                   "числа дней, кто приходовал, поставщик, сумма. Каждое утро этот же "
                                   "отчёт сам кладётся в папку из «Настроек» (задача Windows).")
         self.btn_stock.clicked.connect(self.stock_report)
-        r4.addWidget(self.dot_stock)
+        r4.addWidget(self.dot_stock, 0, Qt.AlignVCenter)
         r4.addWidget(self.lbl_stock, 1)
         r4.addWidget(self.btn_stock)
         grid.addLayout(r4)
@@ -228,10 +228,12 @@ class OwnerWindow(QMainWindow):
                                  "длительность этапов, план/факт, зависшие ЗН, нагрузка — отчёт PDF "
                                  "по ГОСТ 7.32. Только чтение из 1С.")
         self.btn_proc.clicked.connect(self.process_report)
-        r5.addWidget(self.dot_proc)
+        r5.addWidget(self.dot_proc, 0, Qt.AlignVCenter)
         r5.addWidget(self.lbl_proc, 1)
         r5.addWidget(self.btn_proc)
         grid.addLayout(r5)
+        for b in (self.btn_load, self.btn_open_book, self.btn_revenue, self.btn_stock, self.btn_proc):
+            b.setMinimumWidth(210)
         self.lbl_net = QLabel()
         self.lbl_net.setObjectName("hint")
         grid.addWidget(self.lbl_net)
@@ -267,7 +269,7 @@ class OwnerWindow(QMainWindow):
         lay.addWidget(self.tabs, 1)
 
         # --- низ: флешка и удаление
-        g = QGroupBox("Отчёт")
+        g = QGroupBox("Сохранение отчётов")
         row = QHBoxLayout(g)
         row.addWidget(QLabel("Куда сохранить:"))
         self.drives = QComboBox()
@@ -276,7 +278,7 @@ class OwnerWindow(QMainWindow):
         row.addWidget(self.drives)
         refresh = QPushButton("↻")
         refresh.setFixedWidth(36)
-        refresh.setToolTip("Обновить список флешек")
+        refresh.setToolTip("Обновить список флешек и папок")
         refresh.clicked.connect(self.refresh_drives)
         row.addWidget(refresh)
         self.btn_usb = QPushButton("Сохранить отчёт проверки")
@@ -300,6 +302,7 @@ class OwnerWindow(QMainWindow):
         w = QDateEdit(QDate(d.year, d.month, d.day))
         w.setCalendarPopup(True)
         w.setDisplayFormat("dd.MM.yyyy")
+        short_spin(w)
         return w
 
     def period(self) -> tuple[date, date]:
@@ -338,7 +341,7 @@ class OwnerWindow(QMainWindow):
                                 f"· получено в {s.onec.loaded_at:%H:%M}")
         else:
             self.dot_1c.set("grey")
-            self.lbl_1c.setText(f"1С: данные не загружены ({make_source(self.settings).name})")
+            self.lbl_1c.setText(f"1С: данные не загружены · источник: {make_source(self.settings).name}")
         if s.book:
             rng = s.book.date_range
             rng_text = f" за {rng[0]:%d.%m.%Y}–{rng[1]:%d.%m.%Y}" if rng else ""
@@ -631,7 +634,7 @@ class OwnerWindow(QMainWindow):
             return False
         self._log(f"{what} открыт для проверки")
         if not preview.confirm_with_preview(self, enc, name, "сохранить отчёт", encrypted=True):
-            self._log("Отправка отменена владельцем")
+            self._log("Сохранение отменено владельцем")
             return False
         return self._save_report(enc, name, what)
 

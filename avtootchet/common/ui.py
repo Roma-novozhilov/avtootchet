@@ -6,7 +6,7 @@ import traceback
 from typing import Callable
 
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtWidgets import QLabel, QMessageBox, QWidget
+from PySide6.QtWidgets import QAbstractSpinBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QWidget
 
 STYLE = """
 QWidget { font-family: "Segoe UI", Arial; font-size: 10pt; color: #1f2937; }
@@ -23,6 +23,7 @@ QPushButton#primary:hover { background: #2a5fb8; }
 QPushButton#primary:disabled { background: #a7b6d1; color: #eef1f6; }
 QPushButton#danger { color: #b42318; border-color: #f0b4ad; }
 QPushButton#danger:hover { background: #fdecea; }
+QPushButton#tool { padding: 4px 6px; }
 QLineEdit, QDateEdit, QComboBox, QSpinBox { background: #ffffff; border: 1px solid #c9ced6;
             border-radius: 5px; padding: 4px 6px; min-height: 22px; }
 QTabWidget::pane { border: 1px solid #dfe3e8; border-radius: 6px; background: #ffffff; top: -1px; }
@@ -31,6 +32,10 @@ QTabBar::tab { padding: 6px 14px; border: 1px solid #dfe3e8; border-bottom: none
                margin-right: 2px; }
 QTabBar::tab:selected { background: #ffffff; font-weight: 600; }
 QTableWidget { gridline-color: #e5e7eb; border: none; }
+QListWidget { background: #ffffff; border: 1px solid #dfe3e8; border-radius: 6px; }
+QListWidget::item { padding: 3px 4px; }
+QListWidget#nav::item { padding: 7px 10px; }
+QListWidget#nav::item:selected { background: #1f4e9c; color: white; }
 QHeaderView::section { background: #1f3864; color: white; padding: 5px; border: none;
                        border-right: 1px solid #2d4a7a; font-weight: 600; }
 QLabel#title { font-size: 15pt; font-weight: 700; color: #1f3864; }
@@ -86,6 +91,46 @@ def run_in_background(fn: Callable, on_done: Callable[[object, Exception | None]
     run_in_background._keep.add(bridge)
     bridge.done.connect(lambda *_: run_in_background._keep.discard(bridge))
     threading.Thread(target=work, daemon=True).start()
+
+
+class _Form(QFormLayout):
+    """Форма, у которой подпись стоит по центру строки, а не прижата к верху поля."""
+
+    def addRow(self, *args):  # noqa: N802 - имя Qt
+        if len(args) == 2 and isinstance(args[0], str) and args[0]:
+            label = QLabel(args[0])
+            label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            field = args[1]
+            hint = field.sizeHint().height() if isinstance(field, QWidget) else field.sizeHint().height()
+            label.setMinimumHeight(hint)
+            return super().addRow(label, field)
+        return super().addRow(*args)
+
+
+def form_layout(parent: QWidget | None = None) -> QFormLayout:
+    return _Form(parent) if parent is not None else _Form()
+
+
+def tool_button(text: str = "…", tip: str = "") -> QPushButton:
+    """Узкая кнопка рядом с полем («…» - выбрать файл или папку)."""
+    b = QPushButton(text)
+    b.setObjectName("tool")
+    b.setFixedWidth(36)
+    if tip:
+        b.setToolTip(tip)
+    return b
+
+
+def short_spin(w: QAbstractSpinBox, width: int = 130) -> QAbstractSpinBox:
+    """Числа и даты не растягиваем на всю ширину окна."""
+    w.setMaximumWidth(width)
+    return w
+
+
+def show_start(*edits: QLineEdit) -> None:
+    """Длинный текст в поле показывать с начала, а не с конца."""
+    for e in edits:
+        e.setCursorPosition(0)
 
 
 def error_box(parent: QWidget, title: str, text: str):

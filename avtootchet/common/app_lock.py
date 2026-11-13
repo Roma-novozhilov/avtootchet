@@ -12,10 +12,12 @@ import base64
 import hashlib
 import hmac
 import os
-import time
 
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QMessageBox,
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QLabel, QLineEdit, QMessageBox,
                                QVBoxLayout, QWidget)
+
+from .ui import form_layout
 
 ITERATIONS = 200_000
 MIN_LEN = 4
@@ -71,6 +73,7 @@ class UnlockDialog(QDialog):
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("Войти")
         bb.button(QDialogButtonBox.Cancel).setText("Выход")
+        self.ok = bb.button(QDialogButtonBox.Ok)
         bb.accepted.connect(self._try)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
@@ -81,9 +84,18 @@ class UnlockDialog(QDialog):
             return
         self.fails += 1
         self.edit.clear()
-        if self.fails >= 3:
-            time.sleep(min(2 * (self.fails - 2), 10))   # перебор паролей - медленно
         self.msg.setText(f"Неверный пароль (попыток: {self.fails}).")
+        if self.fails >= 3:       # перебор паролей - медленно; окно при этом не зависает
+            wait = min(2 * (self.fails - 2), 10)
+            self.ok.setEnabled(False)
+            self.edit.setEnabled(False)
+            self.msg.setText(f"Неверный пароль (попыток: {self.fails}). Повторить можно через {wait} с.")
+            QTimer.singleShot(wait * 1000, self._unblock)
+
+    def _unblock(self):
+        self.ok.setEnabled(True)
+        self.edit.setEnabled(True)
+        self.edit.setFocus()
 
 
 def unlock(settings, title: str) -> bool:
@@ -102,7 +114,7 @@ class SetPasswordDialog(QDialog):
         self.setWindowTitle("Пароль программы")
         self.setMinimumWidth(380)
         lay = QVBoxLayout(self)
-        f = QFormLayout()
+        f = form_layout()
         self.cur = QLineEdit()
         self.cur.setEchoMode(QLineEdit.Password)
         if is_set(settings):
