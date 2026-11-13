@@ -400,7 +400,7 @@ class Builder:
         self.story.append(Paragraph(f"по данным информационной базы «1С:Далион»<br/>за период {period}",
                                     st["center"]))
         self.story.append(Spacer(1, 75 * mm))
-        self.story.append(Paragraph("Отчёт сформирован программой «АвтоОтчёт» "
+        self.story.append(Paragraph("Отчёт сформирован программой «ACMineevo» "
                                     f"{d.on:%d.%m.%Y}", st["center"]))
         self.story.append(Spacer(1, 8 * mm))
         self.story.append(Paragraph(f"{_esc(self.city)} {d.on:%Y}", st["center"]))
@@ -701,7 +701,7 @@ class Builder:
             self.p("Зависших заказ-нарядов нет.")
 
         buf = BytesIO()
-        doc = _Doc(buf, self.info, title="Анализ бизнес-процесса", author="АвтоОтчёт")
+        doc = _Doc(buf, self.info, title="Анализ бизнес-процесса", author="ACMineevo")
         # реферат ссылается на итоговое число страниц, содержание - на номера: вёрстка в несколько проходов
         doc.multiBuild(self.story, maxPasses=6)
         return buf.getvalue()

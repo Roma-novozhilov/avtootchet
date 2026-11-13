@@ -3,7 +3,7 @@
 # Запускать в PowerShell ОТ ТОГО ПОЛЬЗОВАТЕЛЯ WINDOWS, под которым настроена программа
 # АвтоОтчёт (у него сохранены подключение к 1С и пароль для отчётов):
 #
-#   powershell -ExecutionPolicy Bypass -File setup_stock_task.ps1 -Exe "C:\...\AvtoOtchet-Vladelec.exe"
+#   powershell -ExecutionPolicy Bypass -File setup_stock_task.ps1 -Exe "C:\...\ACMineevo-Vladelec.exe"
 #
 # Параметры: -Time "07:30" (время запуска; до прихода сотрудников - в 9:00 отчёт мешал работе в Далионе), -ShortcutFor "Администратор" (на чьём рабочем столе ярлык).
 # Пароль Windows спросит сама команда schtasks: он нужен, чтобы отчёт строился, даже когда

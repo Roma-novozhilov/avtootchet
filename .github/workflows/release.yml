@@ -45,7 +45,7 @@ jobs:
             git log -1 --format=%B | { grep -v -E '^(Co-Authored-By:|Claude-Session:|Signed-off-by:|Merge pull request)' || true; } > notes.txt
           fi
           if ! grep -q '[^[:space:]]' notes.txt; then
-            echo "АвтоОтчёт ${TAG}" > notes.txt     # описание пустое - хоть что-то для окна обновления
+            echo "ACMineevo ${TAG}" > notes.txt     # описание пустое - хоть что-то для окна обновления
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Версия ${TAG}"; cat notes.txt
@@ -73,24 +73,33 @@ jobs:
       - name: Сборка
         if: steps.ver.outputs.skip != 'true'
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name AvtoOtchet-Vladelec --hidden-import win32timezone --add-data "demo\export.json;demo" owner_main.py
-          pyinstaller --noconfirm --clean --onefile --windowed --name AvtoOtchet-Buhgalter accountant_main.py
-          pyinstaller --noconfirm --clean --onefile --windowed --name AvtoOtchet-Marketing --hidden-import win32timezone marketing_main.py
-          pyinstaller --noconfirm --clean --onefile --windowed --name AvtoOtchet-Vitrina --hidden-import win32timezone --add-data "avtootchet\vitrina\web;avtootchet\vitrina\web" vitrina_main.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name ACMineevo-Vladelec --hidden-import win32timezone --add-data "demo\export.json;demo" owner_main.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name ACMineevo-Buhgalter accountant_main.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name ACMineevo-Marketing --hidden-import win32timezone marketing_main.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name ACMineevo-Vitrina --hidden-import win32timezone --add-data "avtootchet\vitrina\web;avtootchet\vitrina\web" vitrina_main.py
 
       - name: Подпись
         if: steps.ver.outputs.skip != 'true'
         env:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
-        run: python tools/sign_release.py ${{ steps.ver.outputs.tag }} dist/AvtoOtchet-Vladelec.exe dist/AvtoOtchet-Buhgalter.exe dist/AvtoOtchet-Marketing.exe dist/AvtoOtchet-Vitrina.exe
+        # копии со старыми именами - для программ до 0.9.0: они ищут в релизе файл со своим именем
+        # (подпись привязана к имени файла, поэтому подписываются обе копии)
+        run: |
+          copy dist\ACMineevo-Vladelec.exe dist\AvtoOtchet-Vladelec.exe
+          copy dist\ACMineevo-Buhgalter.exe dist\AvtoOtchet-Buhgalter.exe
+          copy dist\ACMineevo-Marketing.exe dist\AvtoOtchet-Marketing.exe
+          python tools/sign_release.py ${{ steps.ver.outputs.tag }} dist/ACMineevo-Vladelec.exe dist/ACMineevo-Buhgalter.exe dist/ACMineevo-Marketing.exe dist/ACMineevo-Vitrina.exe dist/AvtoOtchet-Vladelec.exe dist/AvtoOtchet-Buhgalter.exe dist/AvtoOtchet-Marketing.exe
 
       - name: Публикация
         if: steps.ver.outputs.skip != 'true'
         shell: bash
         run: |
           gh release create "${{ steps.ver.outputs.tag }}" --target "${GITHUB_SHA}" \
-            --title "АвтоОтчёт ${{ steps.ver.outputs.tag }}" --notes-file notes.txt \
+            --title "ACMineevo ${{ steps.ver.outputs.tag }}" --notes-file notes.txt \
+            dist/ACMineevo-Vladelec.exe dist/ACMineevo-Vladelec.exe.sig \
+            dist/ACMineevo-Buhgalter.exe dist/ACMineevo-Buhgalter.exe.sig \
+            dist/ACMineevo-Marketing.exe dist/ACMineevo-Marketing.exe.sig \
+            dist/ACMineevo-Vitrina.exe dist/ACMineevo-Vitrina.exe.sig \
             dist/AvtoOtchet-Vladelec.exe dist/AvtoOtchet-Vladelec.exe.sig \
             dist/AvtoOtchet-Buhgalter.exe dist/AvtoOtchet-Buhgalter.exe.sig \
-            dist/AvtoOtchet-Marketing.exe dist/AvtoOtchet-Marketing.exe.sig \
-            dist/AvtoOtchet-Vitrina.exe dist/AvtoOtchet-Vitrina.exe.sig
+            dist/AvtoOtchet-Marketing.exe dist/AvtoOtchet-Marketing.exe.sig

@@ -106,7 +106,7 @@ class AccountantWindow(QMainWindow):
         super().__init__()
         self.settings = Settings("accountant", DEFAULTS)
         self.journal = Journal("accountant")
-        self.setWindowTitle(f"АвтоОтчёт — бухгалтер  v{__version__}")
+        self.setWindowTitle(f"ACMineevo — бухгалтер  v{__version__}")
         self.resize(640, 360)
 
         root = QWidget()

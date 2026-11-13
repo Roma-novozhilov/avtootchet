@@ -31,7 +31,7 @@ from .. import update_config
 
 API = "https://api.github.com/repos/{repo}/releases/latest"
 MAX_SIZE = 300 * 1024 * 1024
-USER_AGENT = "AvtoOtchet-updater"
+USER_AGENT = "ACMineevo-updater"
 WAIT_ARG = "--after-update"
 
 
@@ -91,8 +91,25 @@ def current_exe() -> Path:
     return Path(sys.executable).resolve()
 
 
+# Программы переименованы из AvtoOtchet-* в ACMineevo-* (версия 0.9.0). Установленный .exe
+# со старым именем ищет в релизе файл с новым и ставит его на своё место (имя файла на диске
+# не меняется - задачи Windows и ярлыки продолжают работать).
+LEGACY_NAMES = {"AvtoOtchet-Vladelec.exe": "ACMineevo-Vladelec.exe",
+                "AvtoOtchet-Buhgalter.exe": "ACMineevo-Buhgalter.exe",
+                "AvtoOtchet-Marketing.exe": "ACMineevo-Marketing.exe",
+                "AvtoOtchet-Vitrina.exe": "ACMineevo-Vitrina.exe"}
+
+
+def release_name(file_name: str) -> str:
+    """Имя файла программы в релизе для .exe с таким именем на диске."""
+    for old, new in LEGACY_NAMES.items():
+        if file_name.lower() == old.lower():
+            return new
+    return file_name
+
+
 def asset_name() -> str:
-    return current_exe().name if is_frozen() else ""
+    return release_name(current_exe().name) if is_frozen() else ""
 
 
 def available() -> str | None:
