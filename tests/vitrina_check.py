@@ -91,7 +91,7 @@ PAYMENTS = [
      "Подразделение": "", "КлиентКод": "", "Клиент": "", "ВидОснования": "РН", "НомерОснования": "Р1"},
 ]
 
-conn = Conn({"пз_ИсторияЗвонков": CALLS, "Документ.ЗаказНаряд КАК З": ORDERS, "Документ.ПриходДенег КАК П": PAYMENTS,
+conn = Conn({"пз_ИсторияЗвонков": CALLS, "З.ДатаСоздания КАК Создан": ORDERS, "ПОМЕСТИТЬ ВТ_П": PAYMENTS,
              "ЗаказНаряд.Услуги КАК У": RuntimeError("Поле не найдено «Работа»"),
              "Справочник.Напоминания": []})
 tables, meta = C.collect(conn, 6, Directions.parse("0", "1"), now=NOW)
@@ -199,6 +199,17 @@ assert req("/api/home", cookie=owner)[0] == 401
 for _ in range(5):
     req("/api/login", {"password": "x"})
 assert req("/api/login", {"password": "owner-pass"})[0] == 429
+httpd.shutdown()
+
+# сайт без файла данных: вход работает, meta говорит «данных нет», разделы - 503
+empty = App(Store(tmp / "nope.db"), {"owner": make_lock("owner-pass")}, ROOT / "avtootchet" / "vitrina" / "web")
+httpd = serve(empty, "127.0.0.1", 0)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+base = f"http://127.0.0.1:{httpd.server_address[1]}"
+ck = login("owner-pass")
+code, body, _ = req("/api/meta", cookie=ck)
+assert code == 200 and json.loads(body)["meta"]["nodata"], body
+assert req("/api/home", cookie=ck)[0] == 503
 httpd.shutdown()
 print("сайт: OK")
 print("Витрина: все проверки прошли")

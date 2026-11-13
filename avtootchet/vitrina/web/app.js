@@ -364,9 +364,14 @@ async function start() {
     if (errs.length) notes.push(`<div class="note bad">Не загрузились разделы: ${errs.map(([k, e]) => `<b>${esc(k)}</b> (${esc(e).slice(0, 160)})`).join("; ")}</div>`);
     if (at && Date.now() - new Date(at.replace(" ", "T")).getTime() > 36 * 3600e3) notes.push('<div class="note bad">Данные старше суток: утренний сбор, похоже, не выполнился.</div>');
     $("#banner").innerHTML = notes.join("");
+    if (m.meta.nodata) {
+      syncControls();
+      $("#view").innerHTML = `<div class="card"><h3>Данных ещё нет</h3><p class="sub">Сбор из Далиона ещё не выполнялся или не удался. В окне программы ACMineevo-Vitrina нажмите «Собрать данные сейчас» и обновите страницу. Если сбор выдаёт ошибку — пришлите её текст.</p><p class="sub">Файл данных: ${esc(m.meta.file || "")}</p></div>`;
+      return;
+    }
     refresh();
   } catch (e) {
-    if (e.message !== "login") { $("#app").hidden = false; $("#view").innerHTML = `<div class="card"><p class="error">${esc(e.message)}</p></div>`; }
+    if (e.message !== "login") { $("#login").hidden = true; $("#app").hidden = false; $("#view").innerHTML = `<div class="card"><p class="error">${esc(e.message)}</p></div>`; }
   }
 }
 

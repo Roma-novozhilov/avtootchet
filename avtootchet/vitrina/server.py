@@ -51,6 +51,10 @@ def check_lock(lock: dict | None, password: str) -> bool:
     return hmac.compare_digest(hashlib.pbkdf2_hmac("sha256", password.encode(), salt, n), want)
 
 
+NO_DATA = ("Данных ещё нет: сбор из Далиона не выполнялся или не удался. В окне программы нажмите "
+           "«Собрать данные сейчас» (или дождитесь сбора в 6:00).")
+
+
 # ---------------------------------------------------------------------------- данные
 class Store:
     """Файл витрины в памяти; перечитывается, когда файл заменили."""
@@ -66,7 +70,10 @@ class Store:
             return self._data
         with self._lock:
             if mtime != self._mtime:
-                tables, meta = read_db(self.path)
+                try:
+                    tables, meta = read_db(self.path)
+                except Exception:  # noqa: BLE001 - файл битый или не витрины: работаем со старыми данными
+                    return self._data
                 self._data = M.Data.from_tables(tables, meta, self.lines, self.full_phones)
                 self._mtime = mtime
             return self._data
@@ -131,7 +138,10 @@ class App:
     def api(self, path: str, q: dict, role: str):
         d = self.store.get()
         if d is None:
-            return 503, {"error": "Данных ещё нет: сбор из Далиона не выполнялся."}
+            if path == "/api/meta":   # войти можно и без данных - страница объяснит, что делать
+                return 200, {"role": role, "meta": {"nodata": True, "file": str(self.store.path)},
+                             "options": {"users": [], "lines": []}}
+            return 503, {"error": NO_DATA}
         f, now = self.filters(q), self.now()
         if path == "/api/meta":
             meta = dict(d.meta)
