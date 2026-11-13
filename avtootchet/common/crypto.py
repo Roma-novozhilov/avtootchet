@@ -42,7 +42,7 @@ def seal(secret: str, header: dict, payload: bytes) -> bytes:
 
 def unseal(secret: str, blob: bytes) -> tuple[dict, bytes]:
     if not blob.startswith(MAGIC) or len(blob) < 4 + 16 + 12 + 16:
-        raise WrongSecret("Это не файл АвтоОтчёта")
+        raise WrongSecret("Это не файл ACMineevo")
     salt, nonce, ct = blob[4:20], blob[20:32], blob[32:]
     try:
         plain = AESGCM(_key(secret, salt)).decrypt(nonce, ct, MAGIC)

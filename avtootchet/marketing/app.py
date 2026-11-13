@@ -1,4 +1,4 @@
-"""АвтоОтчёт — маркетинг. Отдельная программа для маркетолога: только CRM, заявки, задачи
+"""ACMineevo — маркетинг. Отдельная программа для маркетолога: только CRM, заявки, задачи
 и «Простые звонки». Ни кассы, ни выручки, ни склада здесь нет - их код в эту программу не входит.
 
 Подключается к Далиону под пользователем маркетолога (его права в Далионе - вторая защита),
@@ -28,7 +28,7 @@ from ..common.text_dialog import TextDialog
 from ..owner.sources import ComSource, SourceError
 from .export import Directions, load_export, save_export
 
-TITLE = "АвтоОтчёт — маркетинг"
+TITLE = "ACMineevo — маркетинг"
 DEFAULTS = {
     "com": {"server": r"C:\1C\Dalion", "base": "", "user": "", "password": "", "platform": ""},
     "app_lock": {},

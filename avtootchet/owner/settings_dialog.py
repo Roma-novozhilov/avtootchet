@@ -203,7 +203,7 @@ class OwnerSettingsDialog(QDialog):
         w.setLayout(row)
         f.addRow("Папка утреннего отчёта:", w)
         hint = QLabel("Группы — по словам в названии группы номенклатуры. Утренний отчёт "
-                      "(задача Windows, «AvtoOtchet-Vladelec.exe --stock-report») кладётся в эту "
+                      "(задача Windows, «ACMineevo-Vladelec.exe --stock-report») кладётся в эту "
                       "папку (с паролем, если он включён); вчерашний удаляется. Список групп и что из них учтено — на листе «Группы» в самом отчёте.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)

@@ -55,7 +55,7 @@ def send_file(host: str, port: int, secret: str, filename: str, data: bytes,
                             unreachable=True) from None
     except (ConnectionRefusedError, TimeoutError, socket.timeout):
         raise TransferError("ПК владельца не отвечает. На нём должна быть открыта программа "
-                            "АвтоОтчёт (владелец), и оба ПК должны быть в одной сети.",
+                            "ACMineevo — владелец, и оба ПК должны быть в одной сети.",
                             unreachable=True) from None
     except (ConnectionError, OSError) as e:
         raise TransferError(f"Ошибка сети: {e}") from None

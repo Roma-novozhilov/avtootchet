@@ -109,7 +109,7 @@ class OwnerWindow(QMainWindow):
         self.inbox.received.connect(self._on_book_received)
         self.inbox.rejected.connect(self._on_reject)
 
-        self.setWindowTitle(f"АвтоОтчёт — владелец  v{__version__}")
+        self.setWindowTitle(f"ACMineevo — владелец  v{__version__}")
         self.resize(1080, 760)
         self._build_ui()
         self._start_receiver()
@@ -829,7 +829,7 @@ def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE)
     from ..common.app_lock import unlock  # noqa: PLC0415
-    if not unlock(Settings("owner", DEFAULTS), "АвтоОтчёт — владелец"):
+    if not unlock(Settings("owner", DEFAULTS), "ACMineevo — владелец"):
         sys.exit(0)
     w = OwnerWindow()
     if updated:

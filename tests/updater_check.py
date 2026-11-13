@@ -51,6 +51,13 @@ for bad in ((NAME, NEW, exe + b"x", good),                               # фа�
         pass
 print("подпись: OK")
 
+# --- переименование AvtoOtchet-* -> ACMineevo-*: старый .exe ищет в релизе новое имя
+assert updater.release_name("AvtoOtchet-Vladelec.exe") == "ACMineevo-Vladelec.exe"
+assert updater.release_name("avtootchet-marketing.exe") == "ACMineevo-Marketing.exe"
+assert updater.release_name("ACMineevo-Vitrina.exe") == "ACMineevo-Vitrina.exe"
+assert updater.release_name("Другое.exe") == "Другое.exe"
+print("старые имена: OK")
+
 # --- поддельный GitHub
 files = {"/exe": exe, "/sig": good.encode()}
 release = {"tag_name": "v" + NEW, "body": "Тест", "draft": False, "prerelease": False,

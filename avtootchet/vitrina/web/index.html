@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACMineevo — Витрина</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="login-form" class="login-box">
+    <div class="brand big">ACMineevo <span>Витрина</span></div>
+    <label for="password">Пароль</label>
+    <input id="password" type="password" autocomplete="current-password" required autofocus>
+    <button type="submit" class="primary">Войти</button>
+    <div id="login-error" class="error" role="alert"></div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header class="top">
+    <div class="brand">ACMineevo <span>Витрина</span></div>
+    <nav id="tabs" class="tabs" aria-label="Разделы">
+      <button data-tab="home">Главная</button>
+      <button data-tab="problems">Проблемы</button>
+      <button data-tab="telephony">Телефония</button>
+      <button data-tab="managers">Менеджеры</button>
+      <button data-tab="finance" data-owner>Финансы</button>
+    </nav>
+    <div class="top-right">
+      <span id="fresh" class="muted"></span>
+      <button id="logout" class="link">Выйти</button>
+    </div>
+  </header>
+
+  <section class="filters" aria-label="Фильтры">
+    <div class="presets" id="presets">
+      <button data-preset="7">7 дней</button>
+      <button data-preset="30">30 дней</button>
+      <button data-preset="month">Этот месяц</button>
+      <button data-preset="prev">Прошлый месяц</button>
+      <button data-preset="90">3 месяца</button>
+      <button data-preset="180">6 месяцев</button>
+    </div>
+    <label>с <input type="date" id="from"></label>
+    <label>по <input type="date" id="to"></label>
+    <label>Менеджер <select id="user"><option value="">все</option></select></label>
+    <label>Линия <select id="line"><option value="">все</option></select></label>
+  </section>
+
+  <div id="banner"></div>
+  <main id="view" aria-live="polite"></main>
+</div>
+
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-box" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+    <div class="drawer-head">
+      <button id="drawer-back" class="link" hidden>← назад</button>
+      <h2 id="drawer-title"></h2>
+      <button id="drawer-close" class="link" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="drawer-tools" id="drawer-tools">
+      <input type="search" id="drawer-search" placeholder="Поиск по списку">
+      <button id="drawer-csv">Скачать CSV</button>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </div>
+</div>
+<div id="tip" class="tip" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
