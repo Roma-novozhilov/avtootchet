@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from ..common.com import forget_frames, release
 from .process import default_period, load_process
 from .process_pdf import build_process_pdf
 from .sources import ComSource, SourceError, make_source
@@ -27,5 +28,10 @@ def build(settings, today: date | None = None):
     try:
         data = load_process(conn, d1, d2, today, ps["stuck_days"])
     except Exception as e:  # noqa: BLE001
-        raise SourceError(f"Ошибка запроса к 1С: {e or type(e).__name__}") from None
+        msg = f"Ошибка запроса к 1С: {e or type(e).__name__}"
+        forget_frames(e)   # стек ошибки держит соединение - отпускаем до выключения COM
+        raise SourceError(msg) from None
+    finally:
+        conn = None  # noqa: F841 - последняя ссылка на соединение
+        release()    # сеанс 1С закрыт до построения файла
     return data, build_process_pdf(data, ps["org"], ps["city"])

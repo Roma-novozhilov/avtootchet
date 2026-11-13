@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..common.comdate import com_datetime, inline_dates
 from ..common.models import IN, OUT, CashOp, OneCData, norm_number
+from ..common.com import co_initialize
 
 
 class SourceError(Exception):
@@ -181,7 +182,7 @@ class ComSource(DataSource):
 
     def _connect(self):
         try:
-            import pythoncom  # noqa: PLC0415 - есть только на Windows
+            import pythoncom  # noqa: F401, PLC0415 - есть только на Windows
             import win32com.client  # noqa: PLC0415
             import win32timezone  # noqa: F401, PLC0415 - нужен pywin32 для дат из 1С; явный импорт, чтобы попал в .exe
         except ImportError:
@@ -196,7 +197,7 @@ class ComSource(DataSource):
                     f"платформе {self.platform}. Подключение остановлено, чтобы не повредить базу. "
                     f"Установите 64-битный клиент 1С {self.platform} и выполните от администратора:\n"
                     f'regsvr32 "C:\\Program Files\\1cv8\\{self.platform}\\bin\\comcntr.dll"')
-        pythoncom.CoInitialize()  # запрос идёт в фоновом потоке - COM надо включить в нём
+        co_initialize()  # запрос идёт в фоновом потоке - COM надо включить в нём (выключит com.release)
         try:
             connector = win32com.client.Dispatch("V83.COMConnector")
         except Exception:  # noqa: BLE001

@@ -5,6 +5,7 @@ import threading
 import traceback
 from typing import Callable
 
+from .com import run_released
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QAbstractSpinBox, QFormLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QWidget
 
@@ -81,11 +82,15 @@ def run_in_background(fn: Callable, on_done: Callable[[object, Exception | None]
     bridge.done.connect(lambda r, e: on_done(r, e), Qt.QueuedConnection)
 
     def work():
-        try:
-            bridge.done.emit(fn(), None)
-        except Exception as e:  # noqa: BLE001
-            _log_error()
-            bridge.done.emit(None, e)
+        # после операции сеанс 1С закрывается сразу (common/com.py), даже если была ошибка
+        def logged():
+            try:
+                return fn()
+            except Exception:
+                _log_error()
+                raise
+        result, err = run_released(logged)
+        bridge.done.emit(result, err)
 
     run_in_background._keep = getattr(run_in_background, "_keep", set())
     run_in_background._keep.add(bridge)
