@@ -26,7 +26,8 @@ New-Item -ItemType Directory -Force -Path $logDir, 'F:\Diag\dumps' | Out-Null
 icacls $logDir /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
 icacls 'F:\Diag\dumps' /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
 
-# длительность в микросекундах: 1000000 = 1 секунда
+# длительность в микросекундах: 1000000 = 1 секунда.
+# Файловая база: CALL не пишется (нет сервера), медленное - это SDBL (запросы) и DBV8DBEng (движок базы).
 $xml = @"
 <?xml version="1.0" encoding="UTF-8"?>
 <config xmlns="http://v8.1c.ru/v8/tech-log">
@@ -37,7 +38,11 @@ $xml = @"
       <ge property="duration" value="1000000"/>
     </event>
     <event>
-      <eq property="name" value="DBV8DBENG"/>
+      <eq property="name" value="DBV8DBEng"/>
+      <ge property="duration" value="1000000"/>
+    </event>
+    <event>
+      <eq property="name" value="SDBL"/>
       <ge property="duration" value="1000000"/>
     </event>
     <event>
