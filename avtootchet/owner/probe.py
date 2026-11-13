@@ -238,23 +238,26 @@ class Probe:
     def run(self) -> str:
         self.src._check_settings()
         self.conn = self.src._connect()
-        self.lines = [f"Структура Далиона за {self.d1:%d.%m.%Y}–{self.d2:%d.%m.%Y}",
-                      "Только количества и названия, без сумм и клиентов."]
-        self._section("1. Движения по кассам: касса | документ | приход/расход: количество",
-                      self.registrars)
-        self._section("2. Приходы (ПКО): на основании чего (ДокументОснование)",
-                      lambda: self.basis("ПриходДенег", "ДокументОснование"))
-        self._section("3. Приходы (ПКО): реквизит «Основание»",
-                      lambda: self.basis("ПриходДенег", "Основание"))
-        self._section("4. Приходы: расшифровка платежа (ДокОснование)", self.breakdown)
-        self._section("5. Расходы (РКО, возвраты): на основании чего",
-                      lambda: self.basis("РасходДенег", "ДокументОснование"))
-        self._section("6. Заказ-наряды, оплаченные в периоде: сходятся ли суммы", self.orders)
-        self._section("7. Приходы по кассам и подразделениям", self.division)
-        self._section("8. Заказ-наряды по типу и организации", self.order_types)
-        self._section("9. Расходные накладные по виду операции", self.sales)
-        self._section("10. Группы номенклатуры (два уровня)", self.groups)
-        return "\n".join(self.lines)
+        try:
+            self.lines = [f"Структура Далиона за {self.d1:%d.%m.%Y}–{self.d2:%d.%m.%Y}",
+                          "Только количества и названия, без сумм и клиентов."]
+            self._section("1. Движения по кассам: касса | документ | приход/расход: количество",
+                          self.registrars)
+            self._section("2. Приходы (ПКО): на основании чего (ДокументОснование)",
+                          lambda: self.basis("ПриходДенег", "ДокументОснование"))
+            self._section("3. Приходы (ПКО): реквизит «Основание»",
+                          lambda: self.basis("ПриходДенег", "Основание"))
+            self._section("4. Приходы: расшифровка платежа (ДокОснование)", self.breakdown)
+            self._section("5. Расходы (РКО, возвраты): на основании чего",
+                          lambda: self.basis("РасходДенег", "ДокументОснование"))
+            self._section("6. Заказ-наряды, оплаченные в периоде: сходятся ли суммы", self.orders)
+            self._section("7. Приходы по кассам и подразделениям", self.division)
+            self._section("8. Заказ-наряды по типу и организации", self.order_types)
+            self._section("9. Расходные накладные по виду операции", self.sales)
+            self._section("10. Группы номенклатуры (два уровня)", self.groups)
+            return "\n".join(self.lines)
+        finally:
+            self.conn = None   # сеанс 1С закрывается сразу после проверки
 
 
 def run_probe(src: ComSource, days: int = 31) -> str:

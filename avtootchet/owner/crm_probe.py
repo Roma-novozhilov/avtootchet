@@ -155,15 +155,18 @@ class CrmProbe(ProcessProbe):
     def run(self) -> str:
         self.src._check_settings()
         self.conn = self.src._connect()
-        self.lines = [f"Структура CRM и звонков, период {self.d1:%d.%m.%Y}–{self.d2:%d.%m.%Y}",
-                      "Только названия и количества — без телефонов, клиентов, текстов и имён."]
-        self._section("1. Объекты CRM, заявок, задач и звонков: сколько записей", self.objects)
-        self._section("2. Поля объектов и как они заполнены (значения — только перечисления и Да/Нет)",
-                      self.details)
-        self._section("3. «Простые звонки»: коды направления и длительность (как отличить пропущенные)",
-                      self.calls)
-        self._section("4. Напоминания: выполнено, просрочено", self.reminders)
-        return "\n".join(self.lines)
+        try:
+            self.lines = [f"Структура CRM и звонков, период {self.d1:%d.%m.%Y}–{self.d2:%d.%m.%Y}",
+                          "Только названия и количества — без телефонов, клиентов, текстов и имён."]
+            self._section("1. Объекты CRM, заявок, задач и звонков: сколько записей", self.objects)
+            self._section("2. Поля объектов и как они заполнены (значения — только перечисления и Да/Нет)",
+                          self.details)
+            self._section("3. «Простые звонки»: коды направления и длительность (как отличить пропущенные)",
+                          self.calls)
+            self._section("4. Напоминания: выполнено, просрочено", self.reminders)
+            return "\n".join(self.lines)
+        finally:
+            self.conn = None   # сеанс 1С закрывается сразу после проверки
 
 
 def _mask(text: str) -> str:

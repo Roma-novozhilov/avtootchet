@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 
+from ..common.com import forget_frames, release
 from ..common.journal import Journal
 from ..common.settings import Settings
 from ..common.xlsx_crypto import check_password, encrypt_xlsx
@@ -52,7 +53,12 @@ def build(settings, today: date | None = None):
         data = load_stock(conn, today or date.today(), st["days"], group_words(st["exclude"]),
                           st["months"], st["article"])
     except Exception as e:  # noqa: BLE001
-        raise SourceError(f"Ошибка запроса к 1С: {e or type(e).__name__}") from None
+        msg = f"Ошибка запроса к 1С: {e or type(e).__name__}"
+        forget_frames(e)   # стек ошибки держит соединение - отпускаем до выключения COM
+        raise SourceError(msg) from None
+    finally:
+        conn = None  # noqa: F841 - последняя ссылка на соединение
+        release()    # сеанс 1С закрыт до построения файла
     return data, build_stock_report(data)
 
 
