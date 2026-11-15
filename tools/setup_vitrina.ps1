@@ -10,7 +10,7 @@
 #   powershell -ExecutionPolicy Bypass -File setup_vitrina.ps1 -Exe "C:\avtootchet\ACMineevo-Vitrina.exe" -User roma
 #
 # Параметры: -Time "06:00" (время сбора), -Port 8765 (как в настройках программы).
-# Пароль Windows этого пользователя спросит schtasks: он нужен, чтобы задачи работали без входа в систему.
+# Пароль Windows этого пользователя спросит окно входа (один раз): он нужен, чтобы задачи работали без входа в систему.
 # Убрать всё: schtasks /Delete /TN "ACMineevo - витрина, сбор" /F; schtasks /Delete /TN "ACMineevo - витрина, сайт" /F;
 #             Remove-NetFirewallRule -DisplayName "ACMineevo - витрина"
 param(
@@ -27,18 +27,21 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 $ru = if ($User -match '\\') { $User } else { "$env:COMPUTERNAME\$User" }
 
-Write-Output "Задачи будут работать от пользователя $ru. Введите его пароль Windows (два раза - для каждой задачи):"
-schtasks /Create /TN "ACMineevo - витрина, сбор" /TR "`"$Exe`" --collect" /SC DAILY /ST $Time /RU $ru /RP * /F
-if ($LASTEXITCODE -ne 0) { throw "Не удалось создать задачу сбора (код $LASTEXITCODE)" }
-schtasks /Create /TN "ACMineevo - витрина, сайт" /TR "`"$Exe`" --serve" /SC ONSTART /DELAY 0002:00 /RU $ru /RP * /F
-if ($LASTEXITCODE -ne 0) { throw "Не удалось создать задачу сайта (код $LASTEXITCODE)" }
+# пароль спрашивается один раз в окне входа Windows и в консоль не попадает
+$cred = Get-Credential -UserName $ru -Message "Пароль Windows пользователя $ru (чтобы задачи работали без входа в систему)"
+$pw = $cred.GetNetworkCredential().Password
 
-# сайт не должен останавливаться через 72 часа (так Планировщик делает по умолчанию)
-$t = Get-ScheduledTask -TaskName "ACMineevo - витрина, сайт"
-$t.Settings.ExecutionTimeLimit = "PT0S"
-$t.Settings.RestartCount = 3
-$t.Settings.RestartInterval = "PT5M"
-Set-ScheduledTask -InputObject $t | Out-Null
+$collect = New-ScheduledTaskAction -Execute $Exe -Argument "--collect"
+Register-ScheduledTask -TaskName "ACMineevo - витрина, сбор" -Action $collect -Trigger (New-ScheduledTaskTrigger -Daily -At $Time) `
+    -User $ru -Password $pw -Force | Out-Null
+
+# сайт: при включении (через 2 минуты), без ограничения 72 часа, при сбое - перезапуск
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$trigger.Delay = "PT2M"
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5)
+Register-ScheduledTask -TaskName "ACMineevo - витрина, сайт" -Action (New-ScheduledTaskAction -Execute $Exe -Argument "--serve") `
+    -Trigger $trigger -Settings $settings -User $ru -Password $pw -Force | Out-Null
+$pw = $null
 
 Get-NetFirewallRule -DisplayName "ACMineevo - витрина" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -DisplayName "ACMineevo - витрина" -Direction Inbound -Protocol TCP -LocalPort $Port `
