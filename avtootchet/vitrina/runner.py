@@ -20,7 +20,7 @@ DEFAULTS = {
     "app_lock": {},
     "data": {"file": "", "months": 6, "in_codes": "0", "out_codes": "1"},
     # lines: «21=Городская; 45=Авито» - кусок номера линии = название на сайте
-    "site": {"host": "0.0.0.0", "port": 8765, "lines": "", "full_phones": False,
+    "site": {"host": "0.0.0.0", "port": 8765, "lines": "", "full_phones": False, "work_hours": "1-5 9-18",
              "owner_lock": {}, "marketer_lock": {}},
 }
 
@@ -75,7 +75,8 @@ DEMO_PASSWORDS = {"owner": "demo", "marketer": "marketing"}
 def make_app(s, path: Path | None = None, demo: bool = False):
     from .server import App, Store, make_lock  # noqa: PLC0415
     site = s["site"]
-    store = Store(path or data_file(s), parse_lines(site.get("lines", "")), bool(site.get("full_phones")))
+    store = Store(path or data_file(s), parse_lines(site.get("lines", "")), bool(site.get("full_phones")),
+                  site.get("work_hours") or "1-5 9-18")
     if demo:   # данные выдуманные - пароли простые и известные
         locks = {k: make_lock(v) for k, v in DEMO_PASSWORDS.items()}
     else:

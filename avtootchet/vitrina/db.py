@@ -21,13 +21,13 @@ SCHEMA = {
     "calls": ["id", "start", "end", "dir", "dur", "wait", "missed", "callback", "callback_min", "user",
               "client_code", "client", "line", "phone"],
     "orders": ["number", "date", "created", "author", "type", "status", "source", "client_code", "client", "car",
-               "master", "in_work", "done", "issued", "repeat", "posted", "amount", "works", "parts", "materials"],
+               "master", "in_work", "done", "issued", "repeat", "posted", "amount", "paid", "works", "parts", "materials"],
     "payments": ["date", "number", "amount", "cashbox", "method", "direction", "client_code", "client",
                  "basis_kind", "basis_number"],
     "works": ["day", "work", "orders", "amount"],
     "tasks": ["created", "type", "is_task", "executor", "done", "done_at", "hours_to_done"],
 }
-NUMERIC = {"dur", "wait", "callback_min", "amount", "works", "parts", "materials", "orders", "hours_to_done"}
+NUMERIC = {"dur", "wait", "callback_min", "amount", "paid", "works", "parts", "materials", "orders", "hours_to_done"}
 
 
 def write_db(path: Path, tables: dict[str, list[dict]], meta: dict) -> None:

@@ -5,7 +5,11 @@
   номер или принятый входящий с него (как в выгрузке маркетолога);
 * обращение без заказ-наряда - принятый входящий от 30 с, после которого у этого клиента
   за 14 дней не появился ЗН и в момент звонка не было открытого ЗН (машина не в ремонте);
-* зависший ЗН - создан больше 14 дней назад и не выдан;
+* пропущенные в нерабочее время (по умолчанию вне Пн–Пт 9–18) считаются отдельно: в доле
+  пропущенных и у менеджеров учитываются только рабочие часы;
+* запись, которая не состоялась - ЗН в статусе «Предварительный», дата которого прошла больше 3 дней
+  назад, а машину так и не выдали;
+* зависший ЗН - не предварительный, создан больше 14 дней назад и не выдан;
 * выручка - оплаты в кассы по ЗН и расходным накладным минус возвраты (как у владельца);
 * средний чек - сумма выданных за период ЗН / их количество.
 
@@ -24,9 +28,24 @@ OWNER, MARKETER = "owner", "marketer"
 CALL_AFTER_DAYS = 14          # обращение -> ЗН
 OPEN_ORDER_DAYS = 45          # ЗН моложе этого и не выдан - машина ещё в работе
 STUCK_DAYS = 14
+BOOKING_GRACE_DAYS = 3
+DEFAULT_WORK_HOURS = "1-5 9-18"
 TALK_MIN_SEC = 30
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 MONEY_KEYS = {"amount", "works", "parts", "materials", "paid", "debt", "revenue", "avg_check", "sum"}
+
+
+def parse_work_hours(text: str) -> tuple[set[int], int, int]:
+    """«1-5 9-18» -> дни недели 0..4 (Пн..Пт), с 9:00 до 18:00. Непонятная строка - Пн–Пт 9–18."""
+    try:
+        days, hours = (text or "").split()
+        d1, d2 = (int(x) for x in days.split("-"))
+        h1, h2 = (int(x) for x in hours.split("-"))
+        if 1 <= d1 <= d2 <= 7 and 0 <= h1 < h2 <= 24:
+            return set(range(d1 - 1, d2)), h1, h2
+    except ValueError:
+        pass
+    return {0, 1, 2, 3, 4}, 9, 18
 
 
 def _t(s) -> datetime | None:
@@ -85,16 +104,20 @@ class Data:
     meta: dict = field(default_factory=dict)
     lines: dict = field(default_factory=dict)       # кусок номера линии -> название («21» -> «Авито»)
     full_phones: bool = False
+    work_hours: str = DEFAULT_WORK_HOURS
 
     @classmethod
-    def from_tables(cls, tables: dict, meta: dict, lines: dict | None = None, full_phones: bool = False) -> "Data":
-        d = cls(meta=meta, lines=lines or {}, full_phones=full_phones)
+    def from_tables(cls, tables: dict, meta: dict, lines: dict | None = None, full_phones: bool = False,
+                    work_hours: str = DEFAULT_WORK_HOURS) -> "Data":
+        d = cls(meta=meta, lines=lines or {}, full_phones=full_phones, work_hours=work_hours or DEFAULT_WORK_HOURS)
+        wdays, h1, h2 = parse_work_hours(d.work_hours)
         for c in tables.get("calls", []):
             c = dict(c)
             c["_t"] = _t(c["start"])
             if c["_t"] is None:
                 continue
             c["missed"] = c["missed"] in (1, True, "1", "да")
+            c["work"] = c["_t"].weekday() in wdays and h1 <= c["_t"].hour < h2
             c["line_name"] = d.line_name(c.get("line") or "")
             d.calls.append(c)
         d.calls.sort(key=lambda c: c["_t"])
@@ -195,9 +218,23 @@ def converted(d: Data, c: dict) -> bool:
                for o in d.orders_by_client.get(c["client_code"], []))
 
 
+def is_booking(o: dict) -> bool:
+    return "предвар" in (o.get("status") or "").lower()
+
+
 def stuck_orders(d: Data, now: datetime) -> list[dict]:
     return sorted([o for o in d.orders if o["_issued"] is None and o["_t"] < now - timedelta(days=STUCK_DAYS)
-                   and not is_cancelled(o)], key=lambda o: o["_t"])
+                   and not is_cancelled(o) and not is_booking(o)], key=lambda o: o["_t"])
+
+
+def failed_bookings(d: Data, f: Filters, now: datetime) -> list[dict]:
+    """Предварительные ЗН (записи), дата которых давно прошла, а машину так и не выдали."""
+    out = []
+    for o in d.orders:
+        when = max(o["_t"], _t(o.get("date")) or o["_t"])
+        if is_booking(o) and o["_issued"] is None and f.has(when) and when < now - timedelta(days=BOOKING_GRACE_DAYS):
+            out.append(o)
+    return sorted(out, key=lambda o: o["_t"], reverse=True)
 
 
 def is_cancelled(o: dict) -> bool:
@@ -208,7 +245,10 @@ def unpaid_orders(d: Data, f: Filters) -> list[dict]:
     out = []
     for o in d.issued_in(f):
         amount = float(o.get("amount") or 0)
-        paid = round(d.paid_by_order.get(o["number"], 0.0), 2)
+        if o.get("paid") not in (None, ""):        # из 1С: все оплаты по ЗН (касса и счёт), как «Долги клиентов»
+            paid = round(float(o["paid"]), 2)
+        else:                                      # старый файл витрины - только оплаты в кассы за период
+            paid = round(d.paid_by_order.get(o["number"], 0.0), 2)
         if amount > 0 and amount - paid > 1:
             out.append({**o, "paid": paid, "debt": round(amount - paid, 2)})
     return sorted(out, key=lambda o: -o["debt"])
@@ -234,7 +274,10 @@ def call_kpis(d: Data, f: Filters) -> dict:
     inc = _incoming(calls)
     missed = [c for c in inc if c["missed"]]
     nocb = [c for c in missed if c.get("callback") == "нет"]
-    return {"incoming": len(inc), "missed": len(missed), "missed_pct": pct(len(missed), len(inc)),
+    work_inc = [c for c in inc if c["work"]]
+    work_missed = sum(1 for c in work_inc if c["missed"])
+    return {"incoming": len(inc), "missed": len(missed), "missed_pct": pct(work_missed, len(work_inc)),
+            "missed_work": work_missed, "missed_off": len(missed) - work_missed,
             "no_callback": len(nocb), "outgoing": sum(1 for c in calls if c.get("dir") == "out"),
             "callers": len({c.get("phone") for c in inc if c.get("phone")})}
 
@@ -267,9 +310,10 @@ def home(d: Data, f: Filters, role: str, now: datetime) -> dict:
     orders, prev_orders = d.orders_in(f), d.orders_in(p)
     kpis = [
         {"key": "incoming", "title": "Входящих звонков", "value": cur["incoming"], "prev": prev["incoming"]},
-        {"key": "missed", "title": "Пропущено", "value": cur["missed"], "prev": prev["missed"],
-         "note": f"{str(cur['missed_pct']).replace('.', ',')} % входящих" if cur["missed_pct"] is not None else "", "bad_up": True,
-         "list": "missed"},
+        {"key": "missed", "title": "Пропущено в рабочее время", "value": cur["missed_work"], "prev": prev["missed_work"],
+         "note": (f"{str(cur['missed_pct']).replace('.', ',')} % входящих в рабочие часы" if cur["missed_pct"] is not None
+                  else "") + (f"; ещё {cur['missed_off']} в нерабочее время" if cur["missed_off"] else ""),
+         "bad_up": True, "list": "missed"},
         {"key": "no_callback", "title": "Не перезвонили", "value": cur["no_callback"], "prev": prev["no_callback"],
          "bad_up": True, "list": "missed_no_callback"},
         {"key": "orders", "title": "Новых заказ-нарядов", "value": len(orders), "prev": len(prev_orders),
@@ -299,9 +343,12 @@ PROBLEMS = [
      "Поговорили (от 30 с), но за 14 дней у клиента не появился ЗН, и машина не была в ремонте"),
     ("unknown_numbers", "Новые номера без карточки",
      "Принятый звонок с номера, которого нет у клиентов Далиона: новый клиент не заведён"),
+    ("failed_bookings", "Записи, которые не состоялись",
+     "ЗН «Предварительный»: дата записи прошла больше 3 дней назад, машину не выдали"),
     ("cancelled", "Отменённые заказ-наряды", "Статус ЗН содержит «отмен» или «отказ»"),
     ("unpaid", "Выданы, но не оплачены полностью", "Выданный ЗН, по которому оплат меньше суммы"),
-    ("stuck", "Зависшие заказ-наряды", "Создан больше 14 дней назад и не выдан (на сегодня, без учёта периода)"),
+    ("stuck", "Зависшие заказ-наряды",
+     "Не предварительный, создан больше 14 дней назад и не выдан (на сегодня, без учёта периода)"),
     ("no_source", "ЗН без источника рекламы", "Не заполнено «Источник рекламы» - не узнать, откуда клиент"),
     ("open_tasks", "Невыполненные задачи", "Задача не выполнена дольше 2 дней"),
 ]
@@ -323,7 +370,9 @@ def problem_counts(d: Data, f: Filters, role: str, now: datetime) -> list[dict]:
 def problem_rows(d: Data, key: str, f: Filters, now: datetime) -> list[dict]:
     calls = d.calls_in(f)
     if key == "missed":
-        return [c for c in _incoming(calls) if c["missed"]]
+        return [c for c in _incoming(calls) if c["missed"] and c["work"]]
+    if key == "missed_off":
+        return [c for c in _incoming(calls) if c["missed"] and not c["work"]]
     if key == "missed_no_callback":
         return [c for c in _incoming(calls) if c["missed"] and c.get("callback") == "нет"]
     if key == "slow_callback":
@@ -340,6 +389,8 @@ def problem_rows(d: Data, key: str, f: Filters, now: datetime) -> list[dict]:
         return out
     if key == "cancelled":
         return [o for o in d.orders_in(f) if is_cancelled(o)]
+    if key == "failed_bookings":
+        return [o for o in failed_bookings(d, f, now) if not f.user or o.get("author") == f.user]
     if key == "unpaid":
         return unpaid_orders(d, f)
     if key == "stuck":
@@ -365,16 +416,19 @@ def telephony(d: Data, f: Filters) -> dict:
         heat[c["_t"].weekday()][c["_t"].hour] += 1
         if c["missed"]:
             heat_missed[c["_t"].weekday()][c["_t"].hour] += 1
-    lines = defaultdict(lambda: {"incoming": 0, "missed": 0, "no_callback": 0, "outgoing": 0})
+    lines = defaultdict(lambda: {"incoming": 0, "missed": 0, "no_callback": 0, "outgoing": 0, "_wi": 0, "_wm": 0})
     for c in calls:
         r = lines[c["line_name"]]
         if c.get("dir") == "in":
             r["incoming"] += 1
             r["missed"] += c["missed"]
             r["no_callback"] += c["missed"] and c.get("callback") == "нет"
+            r["_wi"] += c["work"]
+            r["_wm"] += c["work"] and c["missed"]
         elif c.get("dir") == "out":
             r["outgoing"] += 1
-    line_rows = [{"line": k, **v, "missed_pct": pct(v["missed"], v["incoming"])}
+    line_rows = [{"line": k, **{a: b for a, b in v.items() if not a.startswith("_")},
+                  "missed_off": v["missed"] - v["_wm"], "missed_pct": pct(v["_wm"], v["_wi"])}
                  for k, v in sorted(lines.items(), key=lambda kv: -kv[1]["incoming"])]
     buckets = [("до 15 мин", 0, 15), ("15–60 мин", 15, 60), ("1–4 ч", 60, 240), ("4–24 ч", 240, 1440),
                ("1–3 дня", 1440, 4321)]
@@ -396,7 +450,8 @@ def telephony(d: Data, f: Filters) -> dict:
         "talk_in_avg": round(sum(talks_in) / len(talks_in)) if talks_in else None,
         "talk_out_avg": round(sum(talks_out) / len(talks_out)) if talks_out else None,
         "repeat": len(rep), "repeat_missed_first": sum(1 for r in rep if r["first"]["missed"]),
-        "known_pct": pct(known, len(inc)), "incoming": len(inc),
+        "known_pct": pct(known, len(inc)), "incoming": len(inc), "work_hours": d.work_hours,
+        "missed_off": sum(1 for c in missed if not c["work"]),
     }
 
 
@@ -414,7 +469,8 @@ def managers(d: Data, f: Filters, role: str) -> dict:
         r = row(c.get("user"))
         if c.get("dir") == "in":
             if c["missed"]:
-                r["missed"] += 1
+                if c["work"]:                  # в нерабочее время звонок пропущен не по вине менеджера
+                    r["missed"] += 1
                 r["no_callback"] += c.get("callback") == "нет"
             else:
                 r["answered"] += 1
@@ -544,8 +600,9 @@ def list_rows(d: Data, key: str, f: Filters, role: str, now: datetime) -> dict:
         raise PermissionError(key)
     rows = problem_rows(d, key, f, now)
     title = next((t for k, t, _ in PROBLEMS if k == key),
-                 {"missed": "Пропущенные звонки", "orders": "Новые заказ-наряды", "repeat": "Повторные обращения"}.get(key, key))
-    if key in ("missed", "missed_no_callback", "slow_callback", "lost_requests", "unknown_numbers"):
+                 {"missed": "Пропущенные в рабочее время", "missed_off": "Пропущенные в нерабочее время",
+                  "orders": "Новые заказ-наряды", "repeat": "Повторные обращения"}.get(key, key))
+    if key in ("missed", "missed_off", "missed_no_callback", "slow_callback", "lost_requests", "unknown_numbers"):
         return {"title": title, "kind": "calls", "rows": [call_row(d, c) for c in rows]}
     if key == "repeat":
         return {"title": title, "kind": "repeat", "rows": [

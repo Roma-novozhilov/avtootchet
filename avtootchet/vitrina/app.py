@@ -139,6 +139,9 @@ class VitrinaWindow(QMainWindow):
         self.lines = QPlainTextEdit(s.get("lines") or "")
         self.lines.setPlaceholderText("по строке на линию: 21=Городской номер\n45=Авито")
         self.lines.setMaximumHeight(70)
+        self.work_hours = QLineEdit(s.get("work_hours") or "1-5 9-18")
+        self.work_hours.setToolTip("Дни недели и часы работы: «1-5 9-18» - Пн–Пт с 9:00 до 18:00. "
+                                   "Пропущенные вне этого времени считаются отдельно.")
         self.full = QCheckBox("показывать номера телефонов полностью (иначе — последние 4 цифры)")
         self.full.setChecked(bool(s.get("full_phones")))
         pw = QHBoxLayout()
@@ -151,6 +154,7 @@ class VitrinaWindow(QMainWindow):
         pw.addStretch()
         f.addRow("Порт:", self.port)
         f.addRow("Названия линий:", self.lines)
+        f.addRow("Часы работы:", self.work_hours)
         f.addRow("", self.full)
         f.addRow("Пароли входа:", pw)
         self._password_labels()
@@ -205,6 +209,7 @@ class VitrinaWindow(QMainWindow):
                                  "in_codes": self.in_codes.text().strip(), "out_codes": self.out_codes.text().strip()}
         site = self.settings["site"]
         site.update({"port": self.port.value(), "lines": self.lines.toPlainText().strip(),
+                     "work_hours": self.work_hours.text().strip() or "1-5 9-18",
                      "full_phones": self.full.isChecked()})
         self.settings.save()
         if not quiet:

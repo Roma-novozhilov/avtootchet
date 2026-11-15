@@ -285,7 +285,7 @@ async function renderHome(v) {
 async function renderProblems(v) {
   const d = await api("/api/home");
   v.innerHTML = `<div class="card"><h3>Проблемные места за период</h3><p class="sub">Каждая карточка открывает список: звонок, клиент, заказ-наряд. Из списка — история клиента.</p><div class="problems">${d.problems.map(problemCard).join("")}</div></div>
-    <div class="card"><h3>Как считается</h3><p class="sub">Пропущенный — входящий длительностью 0 с. «Перезвонили» — в течение 72 ч был исходящий на этот номер или принятый входящий с него. Обращение без ЗН — разговор от 30 с, после которого за 14 дней у клиента не появился заказ-наряд, а машина в тот момент не была в ремонте: это повод проверить, а не готовый вывод.</p></div>`;
+    <div class="card"><h3>Как считается</h3><p class="sub">Пропущенный — входящий длительностью 0 с. «Перезвонили» — в течение 72 ч был исходящий на этот номер или принятый входящий с него. Пропущенные в нерабочее время (вне часов работы из настроек) в долю пропущенных и у менеджеров не входят, но перезванивать по ним всё равно нужно. Запись, которая не состоялась, — ЗН «Предварительный», дата которого прошла больше 3 дней назад. Обращение без ЗН — разговор от 30 с, после которого за 14 дней у клиента не появился заказ-наряд, а машина в тот момент не была в ремонте: это повод проверить, а не готовый вывод.</p></div>`;
   bindLists(v);
 }
 async function renderTelephony(v) {
@@ -298,6 +298,7 @@ async function renderTelephony(v) {
   ];
   v.innerHTML = `
     <div class="card"><div class="stats">${stats.map(([a, b]) => `<div class="stat"><div class="v">${b}</div><div class="t">${a}</div></div>`).join("")}
+      <button class="kpi click" data-list="missed_off"><div class="t">Пропущено в нерабочее время</div><div class="v">${num(t.missed_off)}</div><div class="d">часы работы: ${esc(t.work_hours)} (настройка программы); в долю пропущенных не входят</div></button>
       <button class="kpi click" data-list="repeat"><div class="t">Повторные обращения</div><div class="v">${num(t.repeat)}</div><div class="d">номеров звонили 2+ раз за неделю; ${num(t.repeat_missed_first)} — после пропущенного</div></button></div></div>
     <div class="grid">
       <div class="card"><h3>Нагрузка: входящие по дням недели и часам</h3><p class="sub">Чем темнее — тем больше звонков. Наведите на ячейку — сколько пропущено.</p>${heatmap(t, "heat")}</div>
@@ -307,14 +308,14 @@ async function renderTelephony(v) {
       <div class="card"><h3>Пропущенные по часам</h3><p class="sub">Доля пропущенных от входящих в этот час (часы, где было 5+ звонков)</p>${bars(t.hours.filter((h) => h.incoming >= 5).map((h) => ({ label: `${h.hour}:00–${h.hour + 1}:00`, value: Math.round((100 * h.missed) / h.incoming), extra: `${h.missed} из ${h.incoming}` })), { fmt: (x) => `${x} %` })}</div>
       <div class="card"><h3>Скорость перезвона</h3><p class="sub">Через сколько перезвонили после пропущенного</p>${bars(t.callback.map((c) => ({ label: c.label, value: c.count, bad: c.bad })))}</div>
     </div>
-    <div class="card"><h3>По линиям</h3><p class="sub">Названия линий задаются в настройках программы (например, «21 = Авито»)</p>${table([{ key: "line", title: "Линия" }, { key: "incoming", title: "Входящих", num: true }, { key: "missed", title: "Пропущено", num: true }, { key: "missed_pct", title: "% пропущ.", num: true, fmt: (x) => (x === null ? "—" : num(x) + " %") }, { key: "no_callback", title: "Не перезвонили", num: true }, { key: "outgoing", title: "Исходящих", num: true }], t.lines)}</div>`;
+    <div class="card"><h3>По линиям</h3><p class="sub">Названия линий задаются в настройках программы (например, «21 = Авито»)</p>${table([{ key: "line", title: "Линия" }, { key: "incoming", title: "Входящих", num: true }, { key: "missed", title: "Пропущено", num: true }, { key: "missed_pct", title: "% пропущ. в раб. время", num: true, fmt: (x) => (x === null ? "—" : num(x) + " %") }, { key: "missed_off", title: "Пропущ. в нераб. время", num: true }, { key: "no_callback", title: "Не перезвонили", num: true }, { key: "outgoing", title: "Исходящих", num: true }], t.lines)}</div>`;
   bindLists(v);
 }
 async function renderManagers(v) {
   const d = await api("/api/managers");
   const pctf = (x) => (x === null || x === undefined ? "—" : num(x) + " %");
   v.innerHTML = `
-    <div class="card"><h3>Менеджеры: звонки, заказ-наряды, задачи</h3><p class="sub">Звонок записан на пользователя Далиона, у которого он прошёл. Сейчас звонки есть у: ${esc(d.phone_users.join(", ") || "—")}. Конверсия — доля разговоров с клиентами (от 30 с), после которых за 14 дней появился ЗН.</p>
+    <div class="card"><h3>Менеджеры: звонки, заказ-наряды, задачи</h3><p class="sub">Звонок записан на пользователя Далиона, у которого он прошёл. Сейчас звонки есть у: ${esc(d.phone_users.join(", ") || "—")}. «Пропустил» — только в рабочие часы. Конверсия — доля разговоров с клиентами (от 30 с), после которых за 14 дней появился ЗН.</p>
     ${table([{ key: "name", title: "Менеджер" }, { key: "answered", title: "Принял", num: true }, { key: "missed", title: "Пропустил", num: true }, { key: "missed_pct", title: "% пропущ.", num: true, fmt: pctf }, { key: "no_callback", title: "Не перезвонил", num: true }, { key: "outgoing", title: "Исходящих", num: true }, { key: "talk_avg", title: "Ср. разговор", num: true, fmt: secs }, { key: "conversion", title: "Конверсия в ЗН", num: true, fmt: pctf }, { key: "orders", title: "Создал ЗН", num: true }, { key: "no_source", title: "ЗН без источника", num: true }, { key: "tasks_done", title: "Задач выполнено", num: true }, { key: "tasks_open", title: "Задач открыто", num: true }], d.managers)}</div>
     <div class="card"><h3>Мастера-приёмщики</h3><p class="sub">ЗН по мастеру в заказ-наряде${state.role === "owner" ? "; сумма и средний чек — по выданным за период" : ""}</p>
     ${table([{ key: "name", title: "Мастер" }, { key: "orders", title: "Новых ЗН", num: true }, { key: "issued", title: "Выдано", num: true }, ...(state.role === "owner" ? [{ key: "sum", title: "Сумма выданных", num: true, fmt: money }, { key: "avg_check", title: "Средний чек", num: true, fmt: money }] : [])], d.masters)}</div>

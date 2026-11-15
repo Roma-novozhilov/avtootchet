@@ -59,8 +59,9 @@ NO_DATA = ("Данных ещё нет: сбор из Далиона не вып
 class Store:
     """Файл витрины в памяти; перечитывается, когда файл заменили."""
 
-    def __init__(self, path: Path, lines: dict | None = None, full_phones: bool = False):
-        self.path, self.lines, self.full_phones = Path(path), lines or {}, full_phones
+    def __init__(self, path: Path, lines: dict | None = None, full_phones: bool = False,
+                 work_hours: str = M.DEFAULT_WORK_HOURS):
+        self.path, self.lines, self.full_phones, self.work_hours = Path(path), lines or {}, full_phones, work_hours
         self._mtime, self._data, self._lock = None, None, threading.Lock()
 
     def get(self) -> M.Data | None:
@@ -74,7 +75,7 @@ class Store:
                     tables, meta = read_db(self.path)
                 except Exception:  # noqa: BLE001 - файл битый или не витрины: работаем со старыми данными
                     return self._data
-                self._data = M.Data.from_tables(tables, meta, self.lines, self.full_phones)
+                self._data = M.Data.from_tables(tables, meta, self.lines, self.full_phones, self.work_hours)
                 self._mtime = mtime
             return self._data
 

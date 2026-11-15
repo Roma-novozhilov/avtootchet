@@ -17,7 +17,7 @@ WORKS = [("Замена масла ДВС", 1200), ("Диагностика по
          ("Шиномонтаж R15-R17", 2400), ("Компьютерная диагностика", 1500), ("Замена ремня ГРМ", 7500),
          ("Развал-схождение", 2200), ("Замена амортизаторов", 4800), ("Ремонт глушителя (сварка)", 3500),
          ("Заправка кондиционера", 2500), ("Замена свечей", 1100), ("ТО-1", 4500)]
-STATUSES = ["Выдан", "Выдан", "Выдан", "Выдан", "В работе", "Завершен", "Отменен"]
+STATUSES = ["Отгружен", "Отгружен", "Отгружен", "Отгружен", "Отгружен", "В работе", "Завершен", "Предварительный"]
 BOXES = ["Касса Нал", "Касса Эквайринг", "Касса QR", "Касса БЧ", "Касса Нал (М)"]
 
 
@@ -86,16 +86,16 @@ def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tu
             cl = rnd.choice(clients)
             status = rnd.choice(STATUSES)
             age = (now - t).days
-            if age < 3 and status == "Выдан":
+            if age < 3 and status == "Отгружен":
                 status = "В работе"
             if age > 20 and status == "В работе" and rnd.random() < 0.7:
-                status = "Выдан"
+                status = "Отгружен"
             chosen = rnd.sample(WORKS, rnd.randint(1, 3))
             w = sum(p for _, p in chosen) * rnd.uniform(0.9, 1.4)
             parts = rnd.choice([0, rnd.uniform(500, 25000)])
             mat = rnd.uniform(0, 1500)
-            amount = round(w + parts + mat, 2) if status != "Отменен" else 0
-            issued = t + timedelta(hours=rnd.randint(2, 96)) if status == "Выдан" else None
+            amount = round(w + parts + mat, 2) if status != "Предварительный" else 0
+            issued = t + timedelta(hours=rnd.randint(2, 96)) if status == "Отгружен" else None
             if issued and issued > now:
                 issued = now - timedelta(hours=1)
             num = f"26СЧ{len(orders) + 1:05d}"
