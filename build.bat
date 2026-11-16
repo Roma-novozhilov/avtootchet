@@ -26,12 +26,17 @@ echo === Сборка витрины ===
 ".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onefile --windowed ^
     --name ACMineevo-Vitrina --hidden-import win32timezone --add-data "avtootchet\vitrina\web;avtootchet\vitrina\web" vitrina_main.py || goto :error
 
+echo === Сборка программы администратора ===
+".venv\Scripts\pyinstaller.exe" --noconfirm --clean --onefile --windowed --uac-admin ^
+    --name ACMineevo-Adm --add-data "tools\*.ps1;tools" admin_main.py || goto :error
+
 echo.
 echo Готово! Программы лежат в папке dist:
 echo   ACMineevo-Vladelec.exe  - на ПК владельца
 echo   ACMineevo-Buhgalter.exe - на ПК бухгалтера
 echo   ACMineevo-Marketing.exe - маркетологу (только CRM и звонки)
 echo   ACMineevo-Vitrina.exe   - на сервер: сайт-витрина (сбор в 6:00 + сайт)
+echo   ACMineevo-Adm.exe       - на сервер: администратору (сеансы, задачи, скрипты, журналы)
 pause
 exit /b 0
 
