@@ -1,5 +1,6 @@
 ﻿# Питание сервера по расписанию: с 08:50 до 19:10 - «Высокая производительность»,
 # остальное время - «Сбалансированная». Плюс при включении сервера выбирается нужная схема.
+# В обеих схемах сон и гибернация выключены: сервер работает круглосуточно.
 # Запуск: PowerShell от имени администратора ->
 #     powershell -ExecutionPolicy Bypass -File F:\Diag\setup_power_schedule.ps1
 # Отменить: schtasks /Delete /TN "АвтоОтчёт - питание день" /F  (и «ночь», «при включении»),
@@ -21,6 +22,16 @@ if ($list -match $highStd) {
     $high = $Matches[1]
     Write-Host "Создана схема «Высокая производительность»: $high"
 }
+# Сервер не должен засыпать ни в одной схеме: в «Сбалансированной» у Windows по умолчанию
+# сон через 30 минут - сервер пропадал из сети около 20:09 (через полчаса после ухода последнего).
+# Ночью экономит только снижение частоты процессора; сон, гибернация и отключение дисков выключены.
+foreach ($scheme in @($high, $balanced)) {
+    powercfg /setacvalueindex $scheme SUB_SLEEP STANDBYIDLE 0 | Out-Null     # сон: никогда
+    powercfg /setacvalueindex $scheme SUB_SLEEP HIBERNATEIDLE 0 | Out-Null   # гибернация: никогда
+    powercfg /setacvalueindex $scheme SUB_SLEEP HYBRIDSLEEP 0 | Out-Null     # гибридный сон: выкл
+    powercfg /setacvalueindex $scheme SUB_DISK DISKIDLE 0 | Out-Null         # диски не отключать
+}
+powercfg /hibernate off | Out-Null
 Write-Host "Дневная схема: $high"
 Write-Host "Ночная схема:  $balanced"
 
@@ -43,3 +54,5 @@ schtasks /Create /TN "АвтоОтчёт - питание при включен�
 & powershell -NoProfile -ExecutionPolicy Bypass -File $pick
 Write-Host ''
 Write-Host ('Сейчас активна: ' + (powercfg /getactivescheme)) -ForegroundColor Green
+Write-Host 'Сон в ночной схеме, от сети (0x00000000 = никогда):'
+powercfg /query $balanced SUB_SLEEP STANDBYIDLE | Select-String 'AC|переменного'
