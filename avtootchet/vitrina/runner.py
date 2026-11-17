@@ -1,6 +1,7 @@
 """Запуски витрины без окна (для задач Windows):
 
-    ACMineevo-Vitrina.exe --collect     сбор из Далиона в файл витрины (задача в 6:00)
+    ACMineevo-Vitrina.exe --collect     полный сбор из Далиона в файл витрины (задача в 6:00)
+    ACMineevo-Vitrina.exe --collect-today  дневное обновление: свежие звонки, ЗН, задачи (10, 13, 16, 19)
     ACMineevo-Vitrina.exe --serve       сайт (задача «при включении компьютера»)
     ACMineevo-Vitrina.exe --demo        сайт на выдуманных данных - показать без Далиона
 
@@ -47,7 +48,7 @@ def web_dir() -> Path:
     return resource("avtootchet/vitrina/web")
 
 
-def do_collect(s, journal: Journal) -> dict:
+def do_collect(s, journal: Journal, light: bool = False) -> dict:
     from ..common.com import run_released  # noqa: PLC0415
     from ..marketing.export import Directions  # noqa: PLC0415
     from ..owner.sources import ComSource  # noqa: PLC0415
@@ -58,13 +59,14 @@ def do_collect(s, journal: Journal) -> dict:
 
     def work():
         src._check_settings()
-        return collect_to_file(src._connect(), data_file(s), int(d.get("months") or 6), dirs)
+        return collect_to_file(src._connect(), data_file(s), int(d.get("months") or 6), dirs, light=light)
 
+    title = "Обновление витрины" if light else "Сбор витрины"
     meta, err = run_released(work)
     if err:
-        journal.write("Сбор витрины: ошибка", f"{type(err).__name__}: {err}"[:300])
+        journal.write(f"{title}: ошибка", f"{type(err).__name__}: {err}"[:300])
         raise err
-    journal.write("Сбор витрины", ", ".join(f"{k} {v}" for k, v in meta["counts"].items())
+    journal.write(title, ", ".join(f"{k} {v}" for k, v in meta["counts"].items())
                   + (f"; ошибки: {', '.join(meta['errors'])}" if meta["errors"] else ""))
     return meta
 
@@ -98,9 +100,9 @@ def do_serve(s, journal: Journal, path: Path | None = None, port: int | None = N
 def main(argv: list[str]) -> int:
     journal = Journal("vitrina")
     s = settings()
-    if "--collect" in argv:
+    if "--collect" in argv or "--collect-today" in argv:
         try:
-            do_collect(s, journal)
+            do_collect(s, journal, light="--collect-today" in argv)
             return 0
         except Exception:  # noqa: BLE001 - причина уже в журнале
             return 1

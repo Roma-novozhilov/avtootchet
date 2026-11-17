@@ -8,6 +8,9 @@
   payments  - оплаты клиентов в кассы по ЗН и расходным накладным (как «Выручка» владельца);
   works     - работы из ЗН по дням: сколько раз и на какую сумму;
   tasks     - задачи и напоминания;
+  visits    - история визитов за всё время: код клиента + день (завершённый/выданный ЗН);
+  clients   - карточки контрагентов: код, название, когда и кем заведена, вид, источник;
+  phones    - телефоны карточек (только последние 10 цифр - для поиска дублей и звонков);
   meta      - когда собрано, за какой период, ошибки разделов.
 """
 from __future__ import annotations
@@ -21,11 +24,15 @@ SCHEMA = {
     "calls": ["id", "start", "end", "dir", "dur", "wait", "missed", "callback", "callback_min", "user",
               "client_code", "client", "line", "phone"],
     "orders": ["number", "date", "created", "author", "type", "status", "source", "client_code", "client", "car",
-               "master", "in_work", "done", "issued", "repeat", "posted", "amount", "works", "parts", "materials"],
+               "master", "in_work", "done", "issued", "repeat", "posted", "amount", "works", "parts", "materials",
+               "plan", "refusal", "manager", "deleted"],
     "payments": ["date", "number", "amount", "cashbox", "method", "direction", "client_code", "client",
                  "basis_kind", "basis_number"],
     "works": ["day", "work", "orders", "amount"],
     "tasks": ["created", "type", "is_task", "executor", "done", "done_at", "hours_to_done"],
+    "visits": ["client_code", "day", "type"],
+    "clients": ["code", "name", "created", "author", "kind", "source", "deleted"],
+    "phones": ["code", "phone"],
 }
 NUMERIC = {"dur", "wait", "callback_min", "amount", "works", "parts", "materials", "orders", "hours_to_done"}
 
@@ -59,8 +66,9 @@ def read_db(path: Path) -> tuple[dict[str, list[dict]], dict]:
     try:
         tables = {}
         for name in SCHEMA:
-            try:
-                tables[name] = [dict(r) for r in con.execute(f'SELECT * FROM "{name}"')]
+            try:   # файл старой версии: недостающие столбцы - пустые
+                tables[name] = [{c: None for c in SCHEMA[name]} | dict(r)
+                                for r in con.execute(f'SELECT * FROM "{name}"')]
             except sqlite3.OperationalError:
                 tables[name] = []
         meta = {r["key"]: json.loads(r["value"]) for r in con.execute("SELECT key, value FROM meta")}

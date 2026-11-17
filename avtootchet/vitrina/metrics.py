@@ -82,6 +82,10 @@ class Data:
     payments: list[dict] = field(default_factory=list)
     works: list[dict] = field(default_factory=list)
     tasks: list[dict] = field(default_factory=list)
+    deleted: list[dict] = field(default_factory=list)      # ЗН с пометкой удаления (отменённые записи)
+    visits: dict = field(default_factory=dict)             # код клиента -> отсортированные дни визитов
+    clients: dict = field(default_factory=dict)            # код -> карточка
+    card_phones: dict = field(default_factory=dict)        # код -> [телефоны]
     meta: dict = field(default_factory=dict)
     lines: dict = field(default_factory=dict)       # кусок номера линии -> название («21» -> «Авито»)
     full_phones: bool = False
@@ -102,9 +106,26 @@ class Data:
             o = dict(o)
             o["_t"] = _t(o["created"]) or _t(o["date"])
             o["_issued"] = _t(o["issued"])
+            o["_plan"] = _t(o.get("plan"))
+            o["_in_work"] = _t(o.get("in_work"))
             if o["_t"]:
-                d.orders.append(o)
+                (d.deleted if o.get("deleted") in ("да", 1, True, "1") else d.orders).append(o)
         d.orders.sort(key=lambda o: o["_t"])
+        d.deleted.sort(key=lambda o: o["_t"])
+        days: dict[str, set] = defaultdict(set)
+        for v in tables.get("visits", []):
+            t = _t(v.get("day"))
+            if t and v.get("client_code") and "внутр" not in (v.get("type") or "").lower():
+                days[v["client_code"]].add(t.date())
+        d.visits = {k: sorted(v) for k, v in days.items()}
+        for c in tables.get("clients", []):
+            c = dict(c)
+            c["_t"] = _t(c.get("created"))
+            c["deleted"] = c.get("deleted") in ("да", 1, True, "1")
+            d.clients[c["code"]] = c
+        for p in tables.get("phones", []):
+            if p.get("code") and p.get("phone"):
+                d.card_phones.setdefault(p["code"], []).append(p["phone"])
         for p in tables.get("payments", []):
             p = dict(p)
             p["_t"] = _t(p["date"])
@@ -135,6 +156,37 @@ class Data:
             if p.get("basis_kind") == "ЗН" and p.get("basis_number"):
                 self.paid_by_order[p["basis_number"]] += float(p.get("amount") or 0)
         self.calls_by_id = {c["id"]: c for c in self.calls if c.get("id")}
+        self.phone_owners: dict[str, set] = defaultdict(set)     # телефон -> коды живых карточек
+        for code, phones in self.card_phones.items():
+            card = self.clients.get(code)
+            if card is None or not card["deleted"]:
+                for p in phones:
+                    self.phone_owners[p].add(code)
+        # человек = карточка клиента; если карточки нет - номер телефона
+        self.calls_by_person: dict[str, list[dict]] = defaultdict(list)
+        for c in self.calls:
+            self.calls_by_person[self.person(c)].append(c)
+        self.bookings_by_client: dict[str, list[dict]] = defaultdict(list)
+        for o in self.orders + self.deleted:
+            if o.get("client_code"):
+                self.bookings_by_client[o["client_code"]].append(o)
+
+    def person(self, c: dict) -> str:
+        if c.get("client_code"):
+            return "c:" + c["client_code"]
+        owners = self.phone_owners.get(c.get("phone") or "")
+        if owners and len(owners) == 1:            # номер есть в карточке, но звонок к ней не привязан
+            return "c:" + next(iter(owners))
+        return "p:" + (c.get("phone") or c.get("id") or "")
+
+    def client_name(self, code: str) -> str:
+        card = self.clients.get(code)
+        if card and card.get("name"):
+            return card["name"]
+        for o in self.orders_by_client.get(code, []):
+            if o.get("client"):
+                return o["client"]
+        return ""
 
     def line_name(self, raw: str) -> str:
         for key, name in self.lines.items():
@@ -560,18 +612,36 @@ def list_rows(d: Data, key: str, f: Filters, role: str, now: datetime) -> dict:
     return {"title": title, "kind": "orders", "rows": [order_row(o, role) for o in rows]}
 
 
-def client_path(d: Data, role: str, code: str = "", call_id: str = "") -> dict:
-    """Путь клиента: звонки -> заказ-наряды -> оплаты на одной ленте."""
+def client_path(d: Data, role: str, code: str = "", call_id: str = "", now: datetime | None = None) -> dict:
+    """История клиента: карточка, визиты с 2012 г., звонки -> записи и заказ-наряды -> оплаты на одной ленте."""
+    from .people import booking_outcome, client_card, is_booking  # noqa: PLC0415
+    now = now or datetime.now()
     phone = ""
     if call_id and call_id in d.calls_by_id:
         c = d.calls_by_id[call_id]
-        code = code or c.get("client_code") or ""
         phone = c.get("phone") or ""
-    calls = [c for c in d.calls if (code and c.get("client_code") == code) or (phone and c.get("phone") == phone)]
-    orders = d.orders_by_client.get(code, []) if code else []
+        key = d.person(c)
+        code = code or (key[2:] if key.startswith("c:") else "")
+    phones = set(d.card_phones.get(code, [])) if code else set()
+    if phone:
+        phones.add(phone)
+    seen, calls = set(), []
+    for c in (d.calls_by_person.get("c:" + code, []) if code else []) + [c for c in d.calls if c.get("phone") in phones]:
+        if id(c) not in seen:
+            seen.add(id(c))
+            calls.append(c)
+    orders = d.bookings_by_client.get(code, []) if code else []
     numbers = {o["number"] for o in orders}
     events = [{"t": c["_t"], "kind": "call", **call_row(d, c)} for c in calls]
-    events += [{"t": o["_t"], "kind": "order", **order_row(o, role)} for o in orders]
+    for o in orders:
+        e = {"t": o["_t"], "kind": "order", **order_row(o, role)}
+        if is_booking(o) or o.get("deleted"):
+            e["booking"] = True
+            e["plan"] = o["_plan"].strftime("%d.%m.%Y %H:%M") if o["_plan"] else ""
+            e["outcome"] = booking_outcome(o, now)[0]
+        if o.get("manager"):
+            e["manager"] = o["manager"]
+        events.append(e)
     if role == OWNER:
         for p in d.payments:
             if p.get("basis_number") in numbers or (code and p.get("client_code") == code):
@@ -580,9 +650,9 @@ def client_path(d: Data, role: str, code: str = "", call_id: str = "") -> dict:
     events.sort(key=lambda e: e["t"], reverse=True)
     for e in events:
         e.pop("t")
-    name = next((c.get("client") for c in calls if c.get("client")), "") or \
-        next((o.get("client") for o in orders if o.get("client")), "")
+    name = (d.client_name(code) if code else "") or next((c.get("client") for c in calls if c.get("client")), "")
     return {"client": name or "Номер без карточки клиента", "phone": d.phone_text(phone) if phone else "",
+            "code": code, "card": client_card(d, code, now.date()),
             "calls": len(calls), "orders": len(orders), "events": events[:300]}
 
 
@@ -602,3 +672,7 @@ def filter_options(d: Data) -> dict:
     return {"users": sorted({c.get("user") for c in d.calls if c.get("user")} |
                             {o.get("author") for o in d.orders if o.get("author")}),
             "lines": sorted({c["line_name"] for c in d.calls})}
+
+
+def data_age(meta: dict) -> str:
+    return meta.get("updated_at") or meta.get("collected_at") or ""

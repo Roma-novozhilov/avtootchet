@@ -221,6 +221,7 @@ async function openList(key) {
     drawer.title = d.title; drawer.rows = d.rows; $("#drawer-tools").hidden = false; $("#drawer-search").value = "";
     if (d.kind === "calls") drawer.cols = CALL_COLS;
     else if (d.kind === "orders") drawer.cols = orderCols().concat(key === "unpaid" ? UNPAID_EXTRA : []);
+    else if (d.kind === "table") drawer.cols = d.cols;
     else if (d.kind === "tasks") drawer.cols = [{ key: "created", title: "Создана" }, { key: "type", title: "Тип" }, { key: "executor", title: "Исполнитель" }, { key: "days", title: "Дней открыта", num: true }];
     else drawer.cols = [{ key: "phone", title: "Номер" }, { key: "client", title: "Клиент", fmt: (v) => v || "— нет карточки —" }, { key: "calls", title: "Звонков", num: true }, { key: "missed", title: "Из них пропущено", num: true }, { key: "first", title: "Первый" }, { key: "last", title: "Последний" }];
     drawer.kind = d.kind;
@@ -245,10 +246,17 @@ async function openClient(code, call) {
     const icon = { call: "☎", order: "🔧", payment: "₽" };
     const what = (e) => {
       if (e.kind === "call") return `<b>${esc(e.dir)} звонок</b>${e.missed ? ' <span class="tag bad">пропущен</span>' : ` · ${secs(e.dur)}`}${e.callback === "нет" ? ' <span class="tag bad">не перезвонили</span>' : ""}<div class="muted">${esc(e.line)} · ${esc(e.user)}</div>`;
+      if (e.kind === "order" && e.booking) return `<b>Запись ${esc(e.number)}</b>${e.plan ? ` на ${esc(e.plan)}` : ""} · <span class="tag${/не приехал|отмен|отказ/.test(e.outcome) ? " bad" : ""}">${esc(e.outcome)}</span><div class="muted">создал ${esc(e.author)}${e.manager ? ` · менеджер ${esc(e.manager)}` : ""}${e.car ? ` · ${esc(e.car)}` : ""}${e.source ? ` · источник: ${esc(e.source)}` : ""}</div>`;
       if (e.kind === "order") return `<b>Заказ-наряд ${esc(e.number)}</b> · ${esc(e.status)}${e.amount !== undefined ? ` · ${money(e.amount)}` : ""}<div class="muted">${esc(e.car)} · мастер ${esc(e.master)} · создал ${esc(e.author)}${e.issued ? ` · выдан ${esc(e.issued)}` : ""}${e.source ? ` · источник: ${esc(e.source)}` : ""}</div>`;
       return `<b>Оплата ${money(e.amount)}</b> · ${esc(e.method)}<div class="muted">по ${esc(e.basis)}</div>`;
     };
-    $("#drawer-body").innerHTML = `<p class="muted">За период данных витрины: звонков ${num(d.calls)}, заказ-нарядов ${num(d.orders)}. Новое — сверху.</p><ul class="timeline">${d.events.map((e) => `<li><span class="when">${esc(e.time || e.created)}</span><span>${icon[e.kind]}</span><span class="what">${what(e)}</span></li>`).join("") || '<li class="muted">Событий нет</li>'}</ul>`;
+    const c = d.card || {};
+    const card = c.group !== undefined ? `<div class="client-card">${[
+      ["Группа", c.group || "—"], ["Визитов всего", `${num(c.visits)}${c.first_visit ? ` (с ${esc(c.first_visit)})` : ""}`],
+      ["Последний визит", c.last_visit || "—"], ["Карточка", c.card ? `${esc(c.card)}${c.author ? `, ${esc(c.author)}` : ""}` : "—"],
+      ["Источник в карточке", c.source || "—"], ["Телефоны", (c.phones || []).join(", ") || "нет"],
+    ].map(([a, b]) => `<div><span class="muted">${a}</span><b>${typeof b === "string" && b.includes("<") ? b : esc(b)}</b></div>`).join("")}</div>` : "";
+    $("#drawer-body").innerHTML = card + `<p class="muted">Звонков: ${num(d.calls)}, заказ-нарядов и записей: ${num(d.orders)} (за период данных витрины; визиты — за всё время). Новое — сверху.</p><ul class="timeline">${d.events.map((e) => `<li><span class="when">${esc(e.time || e.created)}</span><span>${icon[e.kind]}</span><span class="what">${what(e)}</span></li>`).join("") || '<li class="muted">Событий нет</li>'}</ul>`;
   } catch (e) { if (e.message !== "login") $("#drawer-body").innerHTML = `<p class="error">${esc(e.message)}</p>`; }
 }
 
@@ -338,7 +346,69 @@ async function renderFinance(v) {
     <div class="card"><h3>По месяцам</h3><p class="sub">Все месяцы, что есть в данных витрины (без фильтра периода)</p>${table([{ key: "month", title: "Месяц", fmt: (m) => mlabel(m) }, { key: "revenue", title: "Выручка", num: true, fmt: money }, { key: "issued", title: "Выдано ЗН", num: true }, { key: "avg_check", title: "Средний чек", num: true, fmt: money }], f.months)}</div>`;
   bindLists(v);
 }
-const RENDER = { home: renderHome, problems: renderProblems, telephony: renderTelephony, managers: renderManagers, finance: renderFinance };
+// ------------------------------------------------------------------ воронка, клиенты, база
+const pctText = (x) => (x === null || x === undefined ? "—" : `${num(x)} %`);
+function countCard(g) {
+  return `<button class="problem" data-list="${esc(g.key)}" title="${esc(g.hint)}"><span class="n ${g.count ? "" : "zero"}">${num(g.count)}</span><span><div class="name">${g.bad ? "⚠ " : ""}${esc(g.title)}</div><div class="hint">${esc(g.hint)}</div>${g.todo ? `<div class="todo">→ ${esc(g.todo)}</div>` : ""}${g.pct !== undefined && g.pct !== null ? `<div class="hint">${num(g.pct)} %${g.of ? ` из ${num(g.of)}` : ""}</div>` : ""}</span></button>`;
+}
+async function renderFunnel(v) {
+  const d = await api("/api/funnel");
+  const top = Math.max(1, d.stages[0].count);
+  const stages = d.stages.map((s, i) => {
+    const prev = i ? d.stages[i - 1].count : null;
+    const lost = prev !== null ? prev - s.count : null;
+    return `<button class="stage" data-list="${s.key}" data-tip="${esc(s.hint)}"><span class="st">${esc(s.title)}</span><span class="track"><span class="fill" style="width:${(100 * s.count) / top}%"></span></span><span class="sv">${num(s.count)} <span class="muted">${pctText(s.pct)}</span></span>${lost ? `<span class="lost">−${num(lost)}</span>` : '<span class="lost"></span>'}</button>`;
+  }).join("");
+  const b = d.bookings;
+  v.innerHTML = `
+    <div class="card"><h3>Воронка: от звонка до выдачи машины</h3><p class="sub">Каждый, кто позвонил в период, — один раз, по первому звонку. Нажмите на этап — список людей. Связь звонка с ЗН — через карточку клиента (по номеру телефона, если звонок к карточке не привязан).</p><div class="funnel">${stages}</div></div>
+    <div class="card"><h3>На чём остановились</h3><p class="sub">Итог по каждому человеку. В списке — ответственный, последнее действие и что сделать.</p><div class="problems">${d.outcomes.map(countCard).join("")}</div></div>
+    <div class="grid">
+      <div class="card"><h3>Записи — предварительные ЗН</h3><p class="sub">ЗН на будущий день, созданные в период: ${num(b.total)}. ${b.has_extra ? "" : "<b>Плановая дата и причина отказа не загрузились — итоги примерные.</b>"}</p>${bars(b.outcomes.map((o) => ({ label: o.title, value: o.count, bad: /не приехал|отмен|отказ/.test(o.title) })))}
+        <p><button class="link" data-list="bookings">Все записи →</button> <button class="link" data-list="bookings_noshow">Не приехали →</button></p></div>
+      <div class="card"><h3>Кто записывал и сколько доехало</h3><p class="sub">Ответственный — «Менеджер» в ЗН, если пусто — автор. «Доехали» — от записей, срок которых уже наступил.</p>${table([{ key: "name", title: "Ответственный" }, { key: "total", title: "Записей", num: true }, { key: "came", title: "Приехали", num: true }, { key: "no_show", title: "Не приехали", num: true }, { key: "cancelled", title: "Отменены", num: true }, { key: "waiting", title: "Ждём", num: true }, { key: "came_pct", title: "Доехали", num: true, fmt: pctText }], b.who)}</div>
+    </div>
+    <div class="card"><h3>Причины отказа</h3><p class="sub">Из поля «Причина отказа» в ЗН. ${b.refusals.length ? "" : "Пока не заполняется — чтобы видеть «думает», «дорого», «нашёл другой сервис», менеджерам нужно выбирать причину при отмене записи."}</p>${b.refusals.length ? bars(b.refusals.map((r) => ({ label: r.title, value: r.count }))) : ""}</div>`;
+  bindLists(v);
+}
+async function renderClients(v) {
+  const d = await api("/api/clients");
+  const p = d.people, g = d.groups, c = d.cards;
+  const mlabel = (m) => `${MONTHS[Number(m.slice(5, 7)) - 1]} ${m.slice(2, 4)}`;
+  v.innerHTML = `
+    <div class="kpis">
+      ${kpiCard({ title: "Звонили людей", value: p.people, note: `${num(p.calls)} входящих звонков, в среднем ${p.calls_per_person === null ? "—" : String(p.calls_per_person).replace(".", ",")} на человека`, list: "people_all" })}
+      ${kpiCard({ title: "Пропущено звонков", value: p.missed_calls, note: `это ${num(p.people_missed)} человек`, list: "people_missed" })}
+      ${kpiCard({ title: "Потом связались", value: p.reached, note: `из ${num(p.people_missed)} с пропущенными`, list: "people_missed" })}
+      ${kpiCard({ title: "Так и не связались", value: p.tried + p.not_tried, note: `${num(p.tried)} — перезванивали без ответа, ${num(p.not_tried)} — не перезванивали`, list: "people_not_reached" })}
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Сколько раз звонил один человек</h3><p class="sub">Входящие за период. Человек — карточка клиента, если её нет — номер.</p>${bars(p.distribution.map((x) => ({ label: x.label, value: x.count })))}</div>
+      <div class="card"><h3>Новые карточки клиентов</h3><p class="sub">${c.available ? `Заведено за период: <b>${num(c.total)}</b>; из них похожи на дубли: ${num(c.new_dups)}.` : "Карточки не загрузились."}</p>${c.available ? lineChart(c.days, [{ name: "Новые карточки", values: c.series, color: COLORS[0] }], { label: "Новые карточки по дням" }) : ""}<p><button class="link" data-list="cards_new">Список карточек →</button></p></div>
+    </div>
+    ${g.available ? `
+    <div class="card"><h3>Клиенты, приезжавшие в период</h3><p class="sub">Визит — завершённый или выданный ЗН (без внутренних); история — за всё время в базе.</p><div class="problems">${g.groups.map(countCard).join("")}</div></div>
+    <div class="card"><h3>Вся база клиентов на ${esc(g.date.split("-").reverse().join("."))}</h3><p class="sub">Для рассылок и обзвона: нажмите — список с номером, числом визитов и датой последнего.</p><div class="problems">${g.state.map(countCard).join("")}</div></div>
+    <div class="card"><h3>Новые, повторные и вернувшиеся по месяцам</h3><p class="sub">Последние 12 месяцев до конца периода</p>${table([{ key: "month", title: "Месяц", fmt: mlabel }, { key: "new", title: "Новые", num: true }, { key: "repeat", title: "Повторные", num: true }, { key: "returned", title: "Вернувшиеся", num: true }], g.months)}</div>`
+    : '<div class="card"><h3>Группы клиентов</h3><p class="sub">История визитов не загрузилась — см. сообщение вверху страницы.</p></div>'}
+    ${c.available ? `<div class="card"><h3>Кто заводит карточки</h3><p class="sub">За период. «Без телефона» и «похожа на дубль» — что поправить; «приезжал» — есть хотя бы один визит.</p>${table([{ key: "name", title: "Автор" }, { key: "total", title: "Карточек", num: true }, { key: "no_phone", title: "Без телефона", num: true }, { key: "dup", title: "Похожа на дубль", num: true }, { key: "visited", title: "Приезжал", num: true }, { key: "deleted", title: "Помечена на удаление", num: true }], c.authors)}</div>` : ""}`;
+  bindLists(v);
+}
+async function renderQuality(v) {
+  const q = await api("/api/quality");
+  const at = (s) => (s ? `${s.slice(8, 10)}.${s.slice(5, 7)} ${s.slice(11, 16)}` : "—");
+  const errs = Object.entries(q.errors || {});
+  v.innerHTML = `
+    <div class="card"><div class="stats">
+      <div class="stat"><div class="v">${num(q.cards)}</div><div class="t">карточек клиентов</div></div>
+      <div class="stat"><div class="v">${num(q.visits_clients)}</div><div class="t">клиентов с визитами${q.first_visit ? ` (с ${esc(String(q.first_visit).slice(0, 4))} г.)` : ""}</div></div>
+      <div class="stat"><div class="v">${at(q.collected_at)}</div><div class="t">полный сбор</div></div>
+      <div class="stat"><div class="v">${at(q.updated_at)}</div><div class="t">дневное обновление (10, 13, 16, 19)</div></div>
+    </div>${errs.length ? `<p class="error">Не загрузились: ${errs.map(([k, e]) => `${esc(k)} (${esc(e).slice(0, 120)})`).join("; ")}</p>` : ""}</div>
+    <div class="card"><h3>Что не заполнено и где хвосты</h3><p class="sub">Нажмите — список, который можно исправить в Далионе (витрина только читает, ничего не меняет).</p><div class="problems">${q.items.map(countCard).join("")}</div></div>`;
+  bindLists(v);
+}
+const RENDER = { funnel: renderFunnel, clients: renderClients, quality: renderQuality, home: renderHome, problems: renderProblems, telephony: renderTelephony, managers: renderManagers, finance: renderFinance };
 
 async function refresh() {
   if (state.tab === "finance" && state.role !== "owner") state.tab = "home";
@@ -356,7 +426,7 @@ async function start() {
     $("#login").hidden = true; $("#app").hidden = false;
     document.querySelectorAll("[data-owner]").forEach((b) => (b.hidden = m.role !== "owner"));
     fillSelect($("#user"), m.options.users); fillSelect($("#line"), m.options.lines);
-    const at = m.meta.collected_at || "";
+    const at = m.meta.updated_at || m.meta.collected_at || "";
     $("#fresh").textContent = at ? `данные на ${at.slice(8, 10)}.${at.slice(5, 7)} ${at.slice(11, 16)}` : "";
     const notes = [];
     if (m.meta.demo) notes.push('<div class="note">Демо-режим: выдуманные клиенты и цифры — только чтобы показать, как выглядит витрина.</div>');

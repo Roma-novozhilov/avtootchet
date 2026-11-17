@@ -1,11 +1,17 @@
-"""Сбор данных для витрины из Далиона (только чтение) - раз в день, обычно в 6:00.
+"""Сбор данных для витрины из Далиона (только чтение).
 
-Каждый раздел (звонки, заказ-наряды, оплаты, работы, задачи) читается отдельным запросом:
-если 1С отвергнет один, остальные соберутся, а на сайте у раздела будет текст ошибки.
-Звонки, перезвоны и задачи считаются тем же кодом, что выгрузка программы маркетолога.
+* Полный сбор - раз в день, обычно в 6:00: всё за N месяцев + история визитов клиентов с 2012 г.
+  (короткий запрос: клиент + день визита) + карточки контрагентов и их телефоны.
+* Дневное обновление (--collect-today, в 10, 13, 16, 19): только свежие звонки, задачи, оплаты
+  (3 дня), заказ-наряды (30 дней) и новые карточки - они подменяют эти же строки в файле.
+
+Каждый раздел читается отдельным запросом: если 1С отвергнет один, остальные соберутся,
+а на сайте у раздела будет текст ошибки. Звонки, перезвоны и задачи считаются тем же кодом,
+что выгрузка программы маркетолога.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -13,7 +19,7 @@ from ..marketing.export import (CALL_COLS, CALLBACK_HOURS, Q_CALLS, Q_TASKS, TAS
                                 build_calls, build_tasks, _dt, _int, _s)
 from ..owner.revenue import classify_cashbox
 from ..common.comdate import inline_dates
-from .db import write_db
+from .db import read_db, write_db
 
 Q_ORDERS = """ВЫБРАТЬ
 	З.Номер КАК Номер,
@@ -61,6 +67,72 @@ Q_ORDERS = """ВЫБРАТЬ
 ORDER_COLS = ("Номер", "Дата", "Создан", "Автор", "Тип", "Статус", "Источник", "КлиентКод", "Клиент",
               "Автомобиль", "Мастер", "ВРаботе", "Завершен", "Выдан", "Повтор", "Проведен", "Сумма", "Работы",
               "Запчасти", "Материалы")
+
+# Записи и отказы: все ЗН периода, включая помеченные на удаление (удалённая предварительная
+# запись = отменённая запись). Отдельным запросом - если какого-то поля нет, основной сбор цел.
+Q_ORDER_EXTRA = """ВЫБРАТЬ
+	З.Номер КАК Номер,
+	З.Дата КАК Дата,
+	З.ПометкаУдаления КАК Удален,
+	З.ПланируемаяДатаНачалаРабот КАК План,
+	ПРЕДСТАВЛЕНИЕ(З.ПричинаОтказа) КАК Отказ,
+	ПРЕДСТАВЛЕНИЕ(З.Менеджер) КАК Менеджер,
+	З.ДатаСоздания КАК Создан,
+	ПРЕДСТАВЛЕНИЕ(З.Автор) КАК Автор,
+	ПРЕДСТАВЛЕНИЕ(З.ТипЗН) КАК Тип,
+	ПРЕДСТАВЛЕНИЕ(З.СтатусЗН) КАК Статус,
+	ПРЕДСТАВЛЕНИЕ(З.ИсточникРекламы) КАК Источник,
+	З.Контрагент.Код КАК КлиентКод,
+	ПРЕДСТАВЛЕНИЕ(З.Контрагент) КАК Клиент,
+	ПРЕДСТАВЛЕНИЕ(З.Автомобиль) КАК Автомобиль,
+	ПРЕДСТАВЛЕНИЕ(З.МастерПриемщик) КАК Мастер
+ИЗ
+	Документ.ЗаказНаряд КАК З
+ГДЕ
+	З.Дата МЕЖДУ &Начало И &Конец"""
+EXTRA_COLS = ("Номер", "Дата", "Удален", "План", "Отказ", "Менеджер", "Создан", "Автор", "Тип", "Статус",
+              "Источник", "КлиентКод", "Клиент", "Автомобиль", "Мастер")
+
+# История визитов за всё время: клиент + день + тип ЗН. Визит - завершённый или выданный ЗН
+# («Закрыт на затраты», предварительные и удалённые не считаются; внутренние убираются в Python).
+# Повтор в тот же день сливается в один визит сам - группировка по дню.
+Q_VISITS = """ВЫБРАТЬ
+	З.Контрагент.Код КАК КлиентКод,
+	НАЧАЛОПЕРИОДА(З.Дата, ДЕНЬ) КАК День,
+	ПРЕДСТАВЛЕНИЕ(З.ТипЗН) КАК Тип
+ИЗ
+	Документ.ЗаказНаряд КАК З
+ГДЕ
+	НЕ З.ПометкаУдаления
+	И З.СтатусЗН В (ЗНАЧЕНИЕ(Перечисление.СтатусыЗаказНаряда.Завершен), ЗНАЧЕНИЕ(Перечисление.СтатусыЗаказНаряда.Отгружен))
+СГРУППИРОВАТЬ ПО
+	З.Контрагент.Код,
+	НАЧАЛОПЕРИОДА(З.Дата, ДЕНЬ),
+	З.ТипЗН"""
+VISIT_COLS = ("КлиентКод", "День", "Тип")
+
+# Карточки контрагентов: когда и кем заведены. Телефоны - отдельно (только цифры номера).
+Q_CLIENTS = """ВЫБРАТЬ
+	К.Код КАК Код,
+	К.Наименование КАК Наименование,
+	К.ДатаСоздания КАК Создан,
+	ПРЕДСТАВЛЕНИЕ(К.Автор) КАК Автор,
+	ПРЕДСТАВЛЕНИЕ(К.ВидКонтрагента) КАК Вид,
+	ПРЕДСТАВЛЕНИЕ(К.ИсточникРекламы) КАК Источник,
+	К.ПометкаУдаления КАК Удален
+ИЗ
+	Справочник.Контрагенты КАК К"""
+# у старых карточек дата создания может быть пустой - поэтому отбор только при дневном обновлении
+Q_CLIENTS_NEW = Q_CLIENTS + """
+ГДЕ
+	К.ДатаСоздания >= &НачалоКарточек"""
+CLIENT_COLS = ("Код", "Наименование", "Создан", "Автор", "Вид", "Источник", "Удален")
+Q_PHONES = """ВЫБРАТЬ
+	Т.Ссылка.Код КАК Код,
+	Т.Телефон КАК Телефон
+ИЗ
+	Справочник.Контрагенты.ТелефоныДляБыстрогоПоиска КАК Т"""
+PHONE_COLS = ("Код", "Телефон")
 
 # Оплаты клиентов в кассы по ЗН и расходным накладным минус возвраты - так же, как «Выручка»
 # в программе владельца (расчётные счета и поступления без основания туда не входят).
@@ -186,6 +258,47 @@ def orders_table(rows: list[dict]) -> list[dict]:
              "parts": _num(r["Запчасти"]), "materials": _num(r["Материалы"])} for r in rows]
 
 
+def order_extras(orders: list[dict], rows: list[dict]) -> list[dict]:
+    """Дописывает к ЗН плановую дату, причину отказа, менеджера; удалённые ЗН - отдельными строками."""
+    by_num = {o["number"]: o for o in orders}
+    out = list(orders)
+    for r in rows:
+        num = _s(r["Номер"])
+        o = by_num.get(num)
+        extra = {"plan": _iso(r["План"]), "refusal": _s(r["Отказ"]), "manager": _s(r["Менеджер"])}
+        if o is not None:
+            o.update(extra)
+        elif r["Удален"]:
+            out.append({"number": num, "date": _iso(r["Дата"]), "created": _iso(r["Создан"]) or _iso(r["Дата"]),
+                        "author": _s(r["Автор"]), "type": _s(r["Тип"]), "status": _s(r["Статус"]),
+                        "source": _s(r["Источник"]), "client_code": _s(r["КлиентКод"]), "client": _s(r["Клиент"]),
+                        "car": _s(r["Автомобиль"]), "master": _s(r["Мастер"]), "in_work": "", "done": "",
+                        "issued": "", "repeat": "", "posted": "", "amount": 0, "works": 0, "parts": 0,
+                        "materials": 0, "deleted": "да", **extra})
+    return out
+
+
+def visits_table(rows: list[dict]) -> list[dict]:
+    return [{"client_code": _s(r["КлиентКод"]), "day": _iso(r["День"])[:10], "type": _s(r["Тип"])}
+            for r in rows if _s(r["КлиентКод"]) and _iso(r["День"])]
+
+
+def clients_table(rows: list[dict]) -> list[dict]:
+    return [{"code": _s(r["Код"]), "name": _s(r["Наименование"]), "created": _iso(r["Создан"]),
+             "author": _s(r["Автор"]), "kind": _s(r["Вид"]), "source": _s(r["Источник"]),
+             "deleted": "да" if r["Удален"] else ""} for r in rows if _s(r["Код"])]
+
+
+def phones_table(rows: list[dict]) -> list[dict]:
+    out, seen = [], set()
+    for r in rows:
+        code, digits = _s(r["Код"]), re.sub(r"\D", "", _s(r["Телефон"]))[-10:]
+        if code and len(digits) >= 6 and (code, digits) not in seen:
+            seen.add((code, digits))
+            out.append({"code": code, "phone": digits})
+    return out
+
+
 def payments_table(rows: list[dict]) -> list[dict]:
     out = []
     for r in rows:
@@ -213,15 +326,27 @@ def tasks_table(rows: list[dict], now: datetime) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------- 1С
-def collect(conn, months: int, dirs: Directions, now: datetime | None = None) -> tuple[dict, dict]:
+EPOCH = datetime(2000, 1, 1)
+# дневное обновление: что перечитывается и с какой глубины (дней назад, с полуночи)
+LIGHT_DAYS = {"calls": 3, "orders": 30, "payments": 3, "tasks": 3, "clients": 3}
+DATE_KEY = {"calls": "start", "orders": "date", "payments": "date", "tasks": "created", "works": "day"}
+
+
+def collect(conn, months: int, dirs: Directions, now: datetime | None = None,
+            light: bool = False) -> tuple[dict, dict]:
+    """Полный сбор (light=False) или дневное обновление (light=True - только свежие разделы)."""
     now = now or datetime.now()
     d1 = (now - timedelta(days=round(months * 30.5))).date()
-    start = datetime(d1.year, d1.month, 1)          # с начала месяца - чтобы месяцы были полными
+    full_start = datetime(d1.year, d1.month, 1)          # с начала месяца - чтобы месяцы были полными
     end = now
+    midnight = datetime(now.year, now.month, now.day)
 
-    def run(text, cols):
+    def since(key):
+        return midnight - timedelta(days=LIGHT_DAYS[key]) if light else full_start
+
+    def run(text, cols, start):
         q = conn.NewObject("Запрос")
-        q.Text, _ = inline_dates(text, {"Начало": start, "Конец": end,
+        q.Text, _ = inline_dates(text, {"Начало": start, "Конец": end, "НачалоКарточек": start,
                                         "КонецСЗапасом": end + timedelta(hours=CALLBACK_HOURS)})
         sel = q.Execute().Choose()
         rows = []
@@ -231,29 +356,79 @@ def collect(conn, months: int, dirs: Directions, now: datetime | None = None) ->
 
     tables: dict[str, list[dict]] = {}
     errors: dict[str, str] = {}
-    sections = (
-        ("calls", "Звонки", lambda: calls_table(run(Q_CALLS, CALL_COLS), dirs, end)),
-        ("orders", "Заказ-наряды", lambda: orders_table(run(Q_ORDERS, ORDER_COLS))),
-        ("payments", "Оплаты", lambda: payments_table(run(Q_PAYMENTS, PAY_COLS))),
-        ("works", "Работы", lambda: works_table(run(Q_WORKS, WORK_COLS))),
-        ("tasks", "Задачи", lambda: tasks_table(run(Q_TASKS, TASK_COLS), now)),
-    )
+
+    def orders():
+        rows = orders_table(run(Q_ORDERS, ORDER_COLS, since("orders")))
+        try:
+            return order_extras(rows, run(Q_ORDER_EXTRA, EXTRA_COLS, since("orders")))
+        except Exception as e:  # noqa: BLE001 - без записей/отказов ЗН всё равно нужны
+            errors["Записи и отказы"] = str(e)
+            return rows
+
+    sections = [
+        ("calls", "Звонки", lambda: calls_table(run(Q_CALLS, CALL_COLS, since("calls")), dirs, end)),
+        ("orders", "Заказ-наряды", orders),
+        ("payments", "Оплаты", lambda: payments_table(run(Q_PAYMENTS, PAY_COLS, since("payments")))),
+        ("tasks", "Задачи", lambda: tasks_table(run(Q_TASKS, TASK_COLS, since("tasks")), now)),
+        ("clients", "Карточки клиентов", lambda: clients_table(run(Q_CLIENTS_NEW if light else Q_CLIENTS,
+                                                                   CLIENT_COLS, since("clients")))),
+    ]
+    if not light:
+        sections += [
+            ("works", "Работы", lambda: works_table(run(Q_WORKS, WORK_COLS, full_start))),
+            ("visits", "История визитов", lambda: visits_table(run(Q_VISITS, VISIT_COLS, EPOCH))),
+            ("phones", "Телефоны клиентов", lambda: phones_table(run(Q_PHONES, PHONE_COLS, EPOCH))),
+        ]
     for key, title, fn in sections:
         try:
             tables[key] = fn()
         except Exception as e:  # noqa: BLE001 - один раздел не должен ронять остальные
             tables[key] = []
             errors[title] = str(e)
-    meta = {"collected_at": now.strftime("%Y-%m-%d %H:%M:%S"), "from": start.strftime("%Y-%m-%d"),
+    meta = {"collected_at": now.strftime("%Y-%m-%d %H:%M:%S"), "from": full_start.strftime("%Y-%m-%d"),
             "to": end.strftime("%Y-%m-%d"), "errors": errors, "demo": False,
             "counts": {k: len(v) for k, v in tables.items()}}
+    if light:
+        meta["cutoffs"] = {k: since(k).strftime("%Y-%m-%d %H:%M:%S") for k in LIGHT_DAYS}
     return tables, meta
 
 
-def collect_to_file(conn, path: Path, months: int, dirs: Directions) -> dict:
-    tables, meta = collect(conn, months, dirs)
+def merge_light(old: dict, old_meta: dict, new: dict, new_meta: dict) -> tuple[dict, dict]:
+    """Свежие строки дневного обновления подменяют те же строки в файле полного сбора.
+    Раздел, который при обновлении не прочитался, остаётся как был утром."""
+    tables = {k: list(v) for k, v in old.items()}
+    failed = set(new_meta.get("errors", {}))
+    titles = {"calls": "Звонки", "orders": "Заказ-наряды", "payments": "Оплаты", "tasks": "Задачи",
+              "clients": "Карточки клиентов"}
+    for key, cutoff in new_meta.get("cutoffs", {}).items():
+        if titles.get(key) in failed or key not in new:
+            continue
+        if key == "clients":
+            fresh = {c["code"] for c in new[key]}
+            tables[key] = [c for c in tables.get(key, []) if c["code"] not in fresh] + new[key]
+            continue
+        dk = DATE_KEY[key]
+        tables[key] = [r for r in tables.get(key, []) if (r.get(dk) or "") < cutoff] + new[key]
+    meta = dict(old_meta)
+    meta["updated_at"] = new_meta["collected_at"]
+    meta["to"] = new_meta["to"]
+    refreshed = set(titles.values()) | {"Записи и отказы"}
+    # ошибки утренних разделов, которые днём не перечитываются, остаются; остальные - по свежему разу
+    meta["errors"] = {**{k: v for k, v in old_meta.get("errors", {}).items() if k not in refreshed},
+                      **new_meta.get("errors", {})}
+    meta["counts"] = {k: len(v) for k, v in tables.items()}
+    return tables, meta
+
+
+def collect_to_file(conn, path: Path, months: int, dirs: Directions, light: bool = False) -> dict:
+    if light and Path(path).exists():
+        old, old_meta = read_db(path)
+        new, new_meta = collect(conn, months, dirs, light=True)
+        tables, meta = merge_light(old, old_meta, new, new_meta)
+    else:                                   # файла ещё нет - обновлять нечего, делаем полный сбор
+        tables, meta = collect(conn, months, dirs)
     write_db(path, tables, meta)
     return meta
 
 
-__all__ = ["collect", "collect_to_file", "TASK_TYPES", "date"]
+__all__ = ["collect", "collect_to_file", "merge_light", "TASK_TYPES", "date"]
