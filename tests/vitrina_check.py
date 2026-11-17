@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime
 from pathlib import Path
@@ -91,7 +92,31 @@ PAYMENTS = [
      "Подразделение": "", "КлиентКод": "", "Клиент": "", "ВидОснования": "РН", "НомерОснования": "Р1"},
 ]
 
-conn = Conn({"пз_ИсторияЗвонков": CALLS, "З.ДатаСоздания КАК Создан": ORDERS, "ПОМЕСТИТЬ ВТ_П": PAYMENTS,
+EXTRA = [
+    {"Номер": "ЗН1", "Дата": datetime(2026, 11, 10, 12), "Удален": False, "План": EMPTY, "Отказ": "", "Менеджер": "Менеджер 1",
+     "Создан": datetime(2026, 11, 10, 12), "Автор": "Менеджер 1", "Тип": "СЕРВИС", "Статус": "Отгружен", "Источник": "",
+     "КлиентКод": "0001", "Клиент": "Клиент А", "Автомобиль": "Авто", "Мастер": "Мастер"},
+    {"Номер": "ЗН2", "Дата": datetime(2026, 11, 11, 12), "Удален": True, "План": datetime(2026, 11, 12, 10),
+     "Отказ": "Дорого", "Менеджер": "", "Создан": datetime(2026, 11, 11, 11, 5), "Автор": "Менеджер 1", "Тип": "СЕРВИС",
+     "Статус": "Предварительный", "Источник": "", "КлиентКод": "0002", "Клиент": "Клиент Б", "Автомобиль": "Авто 2",
+     "Мастер": ""},
+]
+VISITS = [{"КлиентКод": "0001", "День": datetime(2019, 5, 1), "Тип": "СЕРВИС"},
+          {"КлиентКод": "0001", "День": datetime(2026, 11, 11), "Тип": "СЕРВИС"},
+          {"КлиентКод": "0003", "День": datetime(2026, 1, 15), "Тип": "Внутренний"},
+          {"КлиентКод": "", "День": datetime(2026, 1, 15), "Тип": "СЕРВИС"}]
+CLIENTS = [{"Код": "0001", "Наименование": "Клиент А", "Создан": EMPTY, "Автор": "", "Вид": "Покупатель", "Источник": "",
+            "Удален": False},
+           {"Код": "0002", "Наименование": "Клиент Б", "Создан": datetime(2026, 11, 11, 11), "Автор": "Менеджер 1",
+            "Вид": "Покупатель", "Источник": "Авито", "Удален": False},
+           {"Код": "0005", "Наименование": "Клиент  б", "Создан": datetime(2026, 11, 12, 9), "Автор": "Менеджер 1",
+            "Вид": "Покупатель", "Источник": "", "Удален": False}]
+PHONES = [{"Код": "0001", "Телефон": "+7 (910) 111-22-33"}, {"Код": "0005", "Телефон": "8-910-777-00-00"},
+          {"Код": "0001", "Телефон": "89101112233"}]
+
+conn = Conn({"З.ПометкаУдаления КАК Удален": EXTRA, "НАЧАЛОПЕРИОДА(З.Дата, ДЕНЬ) КАК День": VISITS,
+             "ТелефоныДляБыстрогоПоиска": PHONES, "Справочник.Контрагенты КАК К": CLIENTS,
+             "пз_ИсторияЗвонков": CALLS, "З.ДатаСоздания КАК Создан": ORDERS, "ПОМЕСТИТЬ ВТ_П": PAYMENTS,
              "ЗаказНаряд.Услуги КАК У": RuntimeError("Поле не найдено «Работа»"),
              "Справочник.Напоминания": []})
 tables, meta = C.collect(conn, 6, Directions.parse("0", "1"), now=NOW)
@@ -104,7 +129,28 @@ assert c["c3"]["wait"] == 15.0, c["c3"]
 assert c["c4"]["callback"] == "нет"
 assert [p["number"] for p in tables["payments"]] == ["П1"]            # «Вывод ДС» - не выручка
 assert tables["payments"][0]["method"] == "Терминал"
+o = {r["number"]: r for r in tables["orders"]}
+assert o["ЗН1"]["manager"] == "Менеджер 1" and not o["ЗН1"].get("deleted")
+assert o["ЗН2"]["deleted"] == "да" and o["ЗН2"]["refusal"] == "Дорого" and o["ЗН2"]["plan"] == "2026-11-12 10:00:00"
+assert len(tables["visits"]) == 3                                     # без пустого клиента
+assert tables["phones"] == [{"code": "0001", "phone": "9101112233"}, {"code": "0005", "phone": "9107770000"}]
+assert len(tables["clients"]) == 3
 print("сбор: OK")
+
+# дневное обновление: свежие строки подменяют утренние, старые остаются; упавший раздел не трогается
+light_conn = Conn({"З.ПометкаУдаления КАК Удален": [], "Справочник.Контрагенты КАК К": [CLIENTS[2] | {"Наименование": "Новый"}],
+                   "пз_ИсторияЗвонков": [call("c9", datetime(2026, 11, 13, 12), 0, 30)],
+                   "З.ДатаСоздания КАК Создан": [], "ПОМЕСТИТЬ ВТ_П": RuntimeError("занято"), "Справочник.Напоминания": []})
+lt, lm = C.collect(light_conn, 6, Directions.parse("0", "1"), now=NOW, light=True)
+assert "visits" not in lt and "works" not in lt and lm["cutoffs"]["calls"] == "2026-11-10 00:00:00", lm
+assert "Справочник.Контрагенты КАК К\nГДЕ" not in C.Q_CLIENTS and "&НачалоКарточек" in C.Q_CLIENTS_NEW
+mt, mm = C.merge_light(tables, meta, lt, lm)
+assert [c["id"] for c in mt["calls"]] == ["c9"], mt["calls"]            # все утренние звонки - после 10.11
+assert mt["payments"] == tables["payments"]                           # оплаты не прочитались - утренние
+assert {c["code"]: c["name"] for c in mt["clients"]}["0005"] == "Новый" and len(mt["clients"]) == 3
+assert mt["visits"] == tables["visits"] and mm["updated_at"] == "2026-11-13 13:00:00"
+assert set(mm["errors"]) == {"Работы", "Оплаты"}, mm["errors"]
+print("дневное обновление: OK")
 
 tmp = Path(tempfile.mkdtemp())
 write_db(tmp / "v.db", tables, meta)
@@ -128,6 +174,31 @@ assert tel["wait_avg"] == 15 and tel["callback_median"] == 30
 assert M.mask_phone("9101112233") == "+7 ··· ···-22-33"
 print("показатели: OK")
 
+# ------------------------------------------------------------------ клиенты, воронка, база
+from avtootchet.vitrina import people as P  # noqa: E402
+assert [x["number"] for x in d.deleted] == ["ЗН2"] and d.visits["0001"] == [date(2019, 5, 1), date(2026, 11, 11)]
+assert "0003" not in d.visits                                          # внутренний ЗН - не визит
+assert d.person(d.calls_by_id["c4"]) == "c:0005"                       # звонок без карточки -> карточка по номеру
+pp = {r["client_code"] or r["phone"]: r for r in P.call_people(d, f)}
+assert pp["0001"]["status"] == "пропустили, потом связались" and pp["0005"]["status"] == "не перезванивали"
+s_ = P.people_summary(d, f)
+assert (s_["people"], s_["missed_calls"], s_["people_missed"], s_["reached"], s_["not_tried"]) == (3, 2, 2, 1, 1), s_
+fn = {r["client_code"]: r["outcome"] for r in P.funnel(d, f, NOW)["rows"]}
+assert fn == {"0001": "выдан", "0002": "запись отменена или отказ", "0005": "не дозвонились"}, fn
+bk = P.bookings(d, f, NOW)
+assert [(b["number"], b["outcome"]) for b in bk] == [("ЗН2", "отказ: Дорого")], bk
+g = P.client_groups(d, f)
+assert g["_lists"]["g_returned"] == ["0001"] and g["_lists"]["g_never"] == ["0002", "0005"], g["_lists"]
+dup = P.duplicates(d)
+assert dup["name"] == [["0002", "0005"]], dup                          # «Клиент Б» и «Клиент  б»
+q = {i["key"]: i["count"] for i in P.quality(d, f, NOW)["items"]}
+assert q["q_no_phone"] == 1 and q["q_dup_name"] == 1, q
+path = M.client_path(d, M.MARKETER, call_id="c4", now=NOW)
+assert path["code"] == "0005" and path["card"]["group"] == "ещё не обслуживался"
+path = M.client_path(d, M.MARKETER, code="0002", now=NOW)
+assert any(e.get("booking") and e["outcome"] == "отказ: Дорого" for e in path["events"]), path
+print("клиенты и воронка: OK")
+
 # ------------------------------------------------------------------ роли: у маркетолога денег нет
 dt, dm = make_demo(NOW)
 demo = M.Data.from_tables(dt, dm)
@@ -145,6 +216,9 @@ except PermissionError:
     pass
 for key, *_ in M.PROBLEMS:
     M.list_rows(demo, key, f30, M.OWNER, NOW)
+for key in list(P.TITLES) + ["f_all", "f_talked", "f_booked", "f_came", "f_issued"] + ["o:" + k for k in P.OUTCOME_ORDER]:
+    lst = M.strip_money(P.list_rows(demo, key, f30, M.MARKETER, NOW), M.MARKETER)
+    assert "amount" not in json.dumps(lst, ensure_ascii=False), key
 M.finance(demo, f30)
 M.managers(demo, f30, M.OWNER)
 path = M.client_path(demo, M.MARKETER, code=demo.orders[0]["client_code"])
@@ -193,6 +267,10 @@ assert req("/api/finance", cookie=owner)[0] == 200
 assert req("/api/list?key=unpaid", cookie=market)[0] == 403
 assert req("/api/list?key=nope", cookie=owner)[0] == 404
 assert req("/api/meta", cookie=owner)[0] == 200
+for pth in ("/api/funnel", "/api/clients", "/api/quality", "/api/list?key=g_sleeping", "/api/list?key=" + urllib.parse.quote("o:выдан")):
+    code, body, _ = req(pth + ("&" if "?" in pth else "?") + "from=2026-10-15&to=2026-11-13", cookie=market)
+    assert code == 200 and '"amount"' not in body.decode(), (pth, body[:200])
+    assert "_lists" not in body.decode()
 req("/api/logout", {}, cookie=owner)
 assert req("/api/home", cookie=owner)[0] == 401
 # подбор пароля: после 5 неверных - пауза даже для верного

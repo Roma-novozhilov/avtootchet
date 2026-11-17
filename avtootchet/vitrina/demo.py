@@ -18,11 +18,16 @@ WORKS = [("Замена масла ДВС", 1200), ("Диагностика по
          ("Развал-схождение", 2200), ("Замена амортизаторов", 4800), ("Ремонт глушителя (сварка)", 3500),
          ("Заправка кондиционера", 2500), ("Замена свечей", 1100), ("ТО-1", 4500)]
 STATUSES = ["Выдан", "Выдан", "Выдан", "Выдан", "В работе", "Завершен", "Отменен"]
+REFUSALS = ["Дорого", "Передумал", "Нашёл другой сервис", ""]
 BOXES = ["Касса Нал", "Касса Эквайринг", "Касса QR", "Касса БЧ", "Касса Нал (М)"]
 
 
 def _iso(t):
     return t.strftime("%Y-%m-%d %H:%M:%S") if t else ""
+
+
+def _t(s):
+    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
 
 
 def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tuple[dict, dict]:
@@ -99,11 +104,27 @@ def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tu
             if issued and issued > now:
                 issued = now - timedelta(hours=1)
             num = f"26СЧ{len(orders) + 1:05d}"
-            orders.append({"number": num, "date": _iso(t), "created": _iso(t), "author": rnd.choice(USERS + ["Мастер Орлов"]),
+            plan, booked_ahead = "", rnd.random() < 0.25
+            if booked_ahead:                       # запись на будущее: часть приедет, часть нет
+                pt = (t + timedelta(days=rnd.randint(1, 6))).replace(hour=rnd.randint(9, 17), minute=0)
+                plan = _iso(pt)
+                fate = rnd.random()
+                if pt > now or fate < 0.12:
+                    status, issued, amount = "Предварительный", None, 0
+                elif fate < 0.22:                  # отменили: ЗН удалён
+                    orders.append({"number": num, "date": _iso(t), "created": _iso(t), "author": rnd.choice(USERS),
+                                   "type": "СЕРВИС", "status": "Предварительный", "source": "", "client_code": cl["code"],
+                                   "client": cl["name"], "car": "Lada Granta", "master": rnd.choice(MASTERS),
+                                   "in_work": "", "done": "", "issued": "", "repeat": "", "posted": "", "amount": 0,
+                                   "works": 0, "parts": 0, "materials": 0, "plan": plan,
+                                   "refusal": rnd.choice(REFUSALS), "manager": rnd.choice(USERS), "deleted": "да"})
+                    continue
+            orders.append({"plan": plan, "refusal": "", "manager": rnd.choice(USERS + [""]), "deleted": "","number": num, "date": _iso(t), "created": _iso(t), "author": rnd.choice(USERS + ["Мастер Орлов"]),
                            "type": rnd.choice(["СЕРВИС", "СЕРВИС", "МЕТАЛЛООБРАБОТКА"]), "status": status,
                            "source": rnd.choice(SOURCES) if rnd.random() < 0.12 else "",
                            "client_code": cl["code"], "client": cl["name"], "car": rnd.choice(["Lada Vesta", "Kia Rio", "Hyundai Solaris", "Renault Logan", "Toyota Camry"]),
-                           "master": rnd.choice(MASTERS), "in_work": _iso(t + timedelta(hours=1)),
+                           "master": rnd.choice(MASTERS),
+                           "in_work": "" if status == "Предварительный" else _iso((_t(plan) if plan else t) + timedelta(hours=1)),
                            "done": _iso(issued - timedelta(hours=1)) if issued else "", "issued": _iso(issued),
                            "repeat": "", "posted": "да", "amount": amount, "works": round(w, 2) if amount else 0,
                            "parts": round(parts, 2) if amount else 0, "materials": round(mat, 2) if amount else 0})
@@ -130,7 +151,33 @@ def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tu
                               "done": done, "done_at": _iso(t + timedelta(hours=5)) if done else "",
                               "hours_to_done": 5 if done else ""})
         day += timedelta(days=1)
-    tables = {"calls": calls, "orders": orders, "payments": payments, "works": works, "tasks": tasks}
+    # карточки, телефоны (несколько дублей) и история визитов с 2012 г.
+    cards, phones, visits = [], [], []
+    for i, cl in enumerate(clients):
+        recent = i % 9 == 0
+        created = (start + timedelta(days=rnd.randint(0, (now - start).days))) if recent else \
+            datetime(2012, 1, 1) + timedelta(days=rnd.randint(0, (start - datetime(2012, 1, 1)).days))
+        cards.append({"code": cl["code"], "name": cl["name"], "created": _iso(created), "author": rnd.choice(USERS),
+                      "kind": "Покупатель", "source": rnd.choice(SOURCES + [""] * 6), "deleted": ""})
+        if rnd.random() < 0.9:
+            phones.append({"code": cl["code"], "phone": cl["phone"]})
+        if not recent:
+            day = created
+            while True:
+                day += timedelta(days=rnd.randint(60, 900))
+                if day >= start or rnd.random() < 0.15:
+                    break
+                visits.append({"client_code": cl["code"], "day": day.strftime("%Y-%m-%d"), "type": "СЕРВИС"})
+    for i in range(1, 12):                         # один номер в двух карточках
+        code = f"9{i:05d}"
+        cards.append({"code": code, "name": f"Клиент {i:03d}", "created": _iso(now - timedelta(days=i * 5)),
+                      "author": USERS[i % 2], "kind": "Покупатель", "source": "", "deleted": ""})
+        phones.append({"code": code, "phone": clients[i - 1]["phone"]})
+    for o in orders:
+        if o.get("issued") and not o.get("deleted"):
+            visits.append({"client_code": o["client_code"], "day": o["issued"][:10], "type": o["type"]})
+    tables = {"calls": calls, "orders": orders, "payments": payments, "works": works, "tasks": tasks,
+              "visits": visits, "clients": cards, "phones": phones}
     meta = {"collected_at": _iso(now), "from": start.strftime("%Y-%m-%d"), "to": now.strftime("%Y-%m-%d"),
             "errors": {}, "demo": True, "counts": {k: len(v) for k, v in tables.items()}}
     return tables, meta

@@ -566,8 +566,9 @@ def warnings(ov: Overview | None, procs: list[dict], sess: list[Session], power:
         for d in ov.disks:
             if d.free_pct < 10:
                 w.append(f"На диске {d.mount} свободно {d.free_gb:.0f} ГБ ({d.free_pct:.0f}%)")
-        if ov.uptime > timedelta(days=8):
-            w.append(f"Сервер не перезагружался {ov.uptime.days} дн.")
+        up = (now or datetime.now()) - ov.boot
+        if up > timedelta(days=8):
+            w.append(f"Сервер не перезагружался {up.days} дн.")
     stale = [p for p in procs if p["stale"] and p["kind"] != "программа ACMineevo"]
     if stale:
         users = ", ".join(sorted({p["user"] for p in stale}))

@@ -23,6 +23,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from . import metrics as M
+from . import people as P
 from .db import read_db
 
 ITERATIONS = 200_000
@@ -156,16 +157,28 @@ class App:
             if role != M.OWNER:
                 return 403, {"error": "Раздел доступен только владельцу."}
             return 200, M.finance(d, f)
+        if path == "/api/clients":
+            groups = P.client_groups(d, f)
+            groups.pop("_lists", None)
+            return 200, {"people": P.people_summary(d, f), "groups": groups, "cards": P.new_cards(d, f)}
+        if path == "/api/funnel":
+            fn = P.funnel(d, f, now)
+            fn.pop("rows")
+            return 200, {**fn, "bookings": P.bookings_summary(d, f, now)}
+        if path == "/api/quality":
+            return 200, P.quality(d, f, now)
         if path == "/api/list":
             key = q.get("key", [""])[0]
             try:
+                if P.is_people_key(key):
+                    return 200, P.list_rows(d, key, f, role, now)
                 return 200, M.list_rows(d, key, f, role, now)
             except PermissionError:
                 return 403, {"error": "Список доступен только владельцу."}
             except KeyError:
                 return 404, {"error": "Нет такого списка."}
         if path == "/api/client":
-            return 200, M.client_path(d, role, q.get("code", [""])[0], q.get("call", [""])[0])
+            return 200, M.client_path(d, role, q.get("code", [""])[0], q.get("call", [""])[0], now)
         return 404, {"error": "Нет такого адреса."}
 
 
