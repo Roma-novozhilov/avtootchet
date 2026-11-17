@@ -1,7 +1,8 @@
 """ACMineevo — Витрина: окно настроек. Сама витрина - сайт (server.py); окно нужно, чтобы
 задать подключение к Далиону, пароли сайта и названия линий, собрать данные вручную и
 проверить сайт. На сервере работают задачи Windows (tools/setup_vitrina.ps1):
-сбор в 6:00 (--collect) и сайт при включении компьютера (--serve).
+сбор в 6:00 (--collect) и сайт при включении компьютера (--serve). Кнопка «Перезапустить сайт»
+останавливает все копии сайта и запускает его заново из текущего файла программы (restart.py).
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import sys
 import threading
 import webbrowser
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
                                QVBoxLayout, QWidget)
@@ -19,7 +21,7 @@ from ..common import app_lock, updater
 from ..common.journal import Journal
 from ..common.ui import STYLE, form_layout, run_in_background, show_start
 from ..common.update_ui import UpdateController
-from . import runner
+from . import restart, runner
 from .db import read_db
 from .server import make_lock, serve
 
@@ -167,7 +169,11 @@ class VitrinaWindow(QMainWindow):
         self.btn_demo = QPushButton("Демо-сайт")
         self.btn_demo.setToolTip("Сайт на выдуманных данных: пароль demo (владелец) или marketing (маркетолог)")
         self.btn_demo.clicked.connect(self._demo)
-        for b in (save, self.btn_collect, self.btn_site, self.btn_demo):
+        self.btn_restart = QPushButton("⟳  Перезапустить сайт")
+        self.btn_restart.setToolTip("Остановить все запущенные копии сайта (задача Windows, старые процессы) "
+                                    "и запустить сайт заново из этой версии программы")
+        self.btn_restart.clicked.connect(self._restart_site)
+        for b in (save, self.btn_collect, self.btn_restart, self.btn_site, self.btn_demo):
             row.addWidget(b)
         row.addStretch()
         lay.addLayout(row)
@@ -244,6 +250,50 @@ class VitrinaWindow(QMainWindow):
 
         run_in_background(lambda: runner.do_collect(self.settings, self.journal), done)
 
+    def _restart_site(self, ask: bool = True):
+        if ask and QMessageBox.question(
+                self, TITLE, "Перезапустить сайт витрины?\n\nВсе запущенные копии сайта будут остановлены, "
+                             "сайт запустится заново из этой версии программы "
+                             f"({__version__}). Пользователи сайта войдут заново.") != QMessageBox.Yes:
+            return
+        self._save(quiet=True)
+        if self.httpd:                                     # сайт, запущенный из этого окна
+            self.httpd.shutdown()
+            self.httpd.server_close()
+            self.httpd = None
+            self.btn_site.setText("Запустить сайт здесь")
+        self.btn_restart.setEnabled(False)
+        self.btn_restart.setText("Перезапускаю…")
+        port = self.port.value()
+
+        def done(report, err):
+            self.btn_restart.setEnabled(True)
+            self.btn_restart.setText("⟳  Перезапустить сайт")
+            self._show_status()
+            if err:
+                self.journal.write("Перезапуск сайта: ошибка", str(err)[:300])
+                QMessageBox.critical(self, TITLE, str(err))
+                return
+            ver = restart.site_version(port)
+            if ver and ver != __version__:
+                report += (f"\n\nВнимание: сайт работает в версии {ver}, а эта программа - {__version__}. "
+                           "Задача Windows запускает другой файл - поставьте его на место или пересоздайте "
+                           "задачу (tools\\setup_vitrina.ps1).")
+                QMessageBox.warning(self, TITLE, report)
+            else:
+                QMessageBox.information(self, TITLE, report)
+
+        run_in_background(lambda: restart.restart(port, updater.current_exe(), self.journal.write), done)
+
+    def offer_restart_after_update(self):
+        ver = restart.site_version(self.port.value())
+        if ver is None or ver == __version__:
+            return                                         # сайт не запущен или уже новый
+        if QMessageBox.question(self, TITLE, f"Программа обновлена до {__version__}, а сайт работает в "
+                                             f"{ver or 'старой версии'}.\n\nПерезапустить сайт сейчас?") == \
+                QMessageBox.Yes:
+            self._restart_site(ask=False)
+
     def _start(self, demo: bool):
         if self.httpd:
             self.httpd.shutdown()
@@ -307,4 +357,6 @@ def main():
     if updated:
         w.journal.write("Программа обновлена", f"версия {__version__}")
     w.show()
+    if updated:
+        QTimer.singleShot(800, w.offer_restart_after_update)
     sys.exit(app.exec())
