@@ -10,6 +10,7 @@
   tasks     - задачи и напоминания;
   visits    - история визитов за всё время: код клиента + день (завершённый/выданный ЗН);
   clients   - карточки контрагентов: код, название, когда и кем заведена, вид, источник;
+  paid      - оплаты по ЗН всеми способами (кассы и расчётный счёт) - для «выдан, не оплачен»;
   phones    - телефоны карточек (только последние 10 цифр - для поиска дублей и звонков);
   meta      - когда собрано, за какой период, ошибки разделов.
 """
@@ -33,6 +34,7 @@ SCHEMA = {
     "visits": ["client_code", "day", "type"],
     "clients": ["code", "name", "created", "author", "kind", "source", "deleted"],
     "phones": ["code", "phone"],
+    "paid": ["number", "amount"],
 }
 NUMERIC = {"dur", "wait", "callback_min", "amount", "works", "parts", "materials", "orders", "hours_to_done"}
 
