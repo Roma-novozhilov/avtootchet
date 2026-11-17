@@ -86,6 +86,7 @@ class Data:
     visits: dict = field(default_factory=dict)             # код клиента -> отсортированные дни визитов
     clients: dict = field(default_factory=dict)            # код -> карточка
     card_phones: dict = field(default_factory=dict)        # код -> [телефоны]
+    order_paid: dict = field(default_factory=dict)         # № ЗН -> оплачено всеми способами
     meta: dict = field(default_factory=dict)
     lines: dict = field(default_factory=dict)       # кусок номера линии -> название («21» -> «Авито»)
     full_phones: bool = False
@@ -123,6 +124,9 @@ class Data:
             c["_t"] = _t(c.get("created"))
             c["deleted"] = c.get("deleted") in ("да", 1, True, "1")
             d.clients[c["code"]] = c
+        for p in tables.get("paid", []):
+            if p.get("number"):
+                d.order_paid[p["number"]] = d.order_paid.get(p["number"], 0.0) + float(p.get("amount") or 0)
         for p in tables.get("phones", []):
             if p.get("code") and p.get("phone"):
                 d.card_phones.setdefault(p["code"], []).append(p["phone"])
@@ -155,6 +159,10 @@ class Data:
         for p in self.payments:
             if p.get("basis_kind") == "ЗН" and p.get("basis_number"):
                 self.paid_by_order[p["basis_number"]] += float(p.get("amount") or 0)
+        # оплаты по ЗН любым способом (кассы и расчётный счёт, собраны утром); касса за сегодня
+        # может быть свежее - берётся большее
+        for num, amount in self.order_paid.items():
+            self.paid_by_order[num] = max(self.paid_by_order[num], amount)
         self.calls_by_id = {c["id"]: c for c in self.calls if c.get("id")}
         self.phone_owners: dict[str, set] = defaultdict(set)     # телефон -> коды живых карточек
         for code, phones in self.card_phones.items():
@@ -248,8 +256,11 @@ def converted(d: Data, c: dict) -> bool:
 
 
 def stuck_orders(d: Data, now: datetime) -> list[dict]:
+    """Машина принята (не запись) и не выдана дольше 14 дней. Предварительные ЗН - это записи,
+    они в «Воронке» и в «Базе» (висящие записи), а «Закрыт на затраты» выдавать некому."""
     return sorted([o for o in d.orders if o["_issued"] is None and o["_t"] < now - timedelta(days=STUCK_DAYS)
-                   and not is_cancelled(o)], key=lambda o: o["_t"])
+                   and not is_cancelled(o) and not re.search(r"предвар|затрат|отгруж", (o.get("status") or "").lower())],
+                  key=lambda o: o["_t"])
 
 
 def is_cancelled(o: dict) -> bool:
@@ -351,11 +362,12 @@ PROBLEMS = [
      "Поговорили (от 30 с), но за 14 дней у клиента не появился ЗН, и машина не была в ремонте"),
     ("unknown_numbers", "Новые номера без карточки",
      "Принятый звонок с номера, которого нет у клиентов Далиона: новый клиент не заведён"),
-    ("cancelled", "Отменённые заказ-наряды", "Статус ЗН содержит «отмен» или «отказ»"),
-    ("unpaid", "Выданы, но не оплачены полностью", "Выданный ЗН, по которому оплат меньше суммы"),
-    ("stuck", "Зависшие заказ-наряды", "Создан больше 14 дней назад и не выдан (на сегодня, без учёта периода)"),
+    ("cancelled", "Отменённые заказ-наряды", "ЗН помечен на удаление (так в Далионе отменяют запись) или статус «отмен»"),
+    ("unpaid", "Выданы, но не оплачены полностью", "Выданный ЗН, по которому оплат (кассы и расчётный счёт) меньше суммы"),
+    ("stuck", "Зависшие заказ-наряды",
+     "Машина принята (не запись), ЗН создан больше 14 дней назад и не выдан (на сегодня, без учёта периода)"),
     ("no_source", "ЗН без источника рекламы", "Не заполнено «Источник рекламы» - не узнать, откуда клиент"),
-    ("open_tasks", "Невыполненные задачи", "Задача не выполнена дольше 2 дней"),
+    ("open_tasks", "Невыполненные задачи", "Задача, созданная в период, не выполнена дольше 2 дней"),
 ]
 
 
@@ -391,7 +403,8 @@ def problem_rows(d: Data, key: str, f: Filters, now: datetime) -> list[dict]:
                 out.append(c)
         return out
     if key == "cancelled":
-        return [o for o in d.orders_in(f) if is_cancelled(o)]
+        return [o for o in d.orders_in(f) if is_cancelled(o)] + [
+            o for o in d.deleted if f.has(o["_t"]) and (not f.user or o.get("author") == f.user)]
     if key == "unpaid":
         return unpaid_orders(d, f)
     if key == "stuck":
@@ -400,7 +413,7 @@ def problem_rows(d: Data, key: str, f: Filters, now: datetime) -> list[dict]:
         return [o for o in d.orders_in(f) if not (o.get("source") or "").strip()]
     if key == "open_tasks":
         return [t for t in d.tasks if t["is_task"] and not t["done"] and t["_t"] < now - timedelta(days=2)
-                and (not f.user or t.get("executor") == f.user)]
+                and f.has(t["_t"]) and (not f.user or t.get("executor") == f.user)]
     if key == "orders":
         return d.orders_in(f)
     if key == "repeat":

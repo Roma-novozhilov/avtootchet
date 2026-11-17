@@ -198,6 +198,33 @@ Q_PAYMENTS = """ВЫБРАТЬ
 PAY_COLS = ("Знак", "Дата", "Номер", "Сумма", "Касса", "Подразделение", "КлиентКод", "Клиент", "ВидОснования",
             "НомерОснования")
 
+# Оплаты по ЗН всеми способами (кассы и расчётный счёт) минус возвраты - только для «выдан, но не
+# оплачен»: безналичная оплата юрлиц в выручку касс не входит, но долгом не является.
+Q_ORDER_PAID = """ВЫБРАТЬ
+	1 КАК Знак,
+	ВЫРАЗИТЬ(П.ДокументОснование КАК Документ.ЗаказНаряд).Номер КАК Номер,
+	П.СуммаДокумента КАК Сумма
+ИЗ
+	Документ.ПриходДенег КАК П
+ГДЕ
+	П.Проведен
+	И П.Дата МЕЖДУ &Начало И &КонецСЗапасом
+	И ТИПЗНАЧЕНИЯ(П.ДокументОснование) = ТИП(Документ.ЗаказНаряд)
+
+ОБЪЕДИНИТЬ ВСЕ
+
+ВЫБРАТЬ
+	-1,
+	ВЫРАЗИТЬ(Р.ДокументОснование КАК Документ.ЗаказНаряд).Номер,
+	Р.СуммаДокумента
+ИЗ
+	Документ.РасходДенег КАК Р
+ГДЕ
+	Р.Проведен
+	И Р.Дата МЕЖДУ &Начало И &КонецСЗапасом
+	И ТИПЗНАЧЕНИЯ(Р.ДокументОснование) = ТИП(Документ.ЗаказНаряд)"""
+PAID_COLS = ("Знак", "Номер", "Сумма")
+
 Q_WORKS = """ВЫБРАТЬ
 	НАЧАЛОПЕРИОДА(У.Ссылка.Дата, ДЕНЬ) КАК День,
 	ПРЕДСТАВЛЕНИЕ(У.Работа) КАК Работа,
@@ -276,6 +303,15 @@ def order_extras(orders: list[dict], rows: list[dict]) -> list[dict]:
                         "issued": "", "repeat": "", "posted": "", "amount": 0, "works": 0, "parts": 0,
                         "materials": 0, "deleted": "да", **extra})
     return out
+
+
+def paid_table(rows: list[dict]) -> list[dict]:
+    by: dict[str, float] = {}
+    for r in rows:
+        num = _s(r["Номер"])
+        if num:
+            by[num] = by.get(num, 0.0) + _num(r["Сумма"]) * (1 if _int(r["Знак"]) > 0 else -1)
+    return [{"number": k, "amount": round(v, 2)} for k, v in by.items()]
 
 
 def visits_table(rows: list[dict]) -> list[dict]:
@@ -376,6 +412,7 @@ def collect(conn, months: int, dirs: Directions, now: datetime | None = None,
     if not light:
         sections += [
             ("works", "Работы", lambda: works_table(run(Q_WORKS, WORK_COLS, full_start))),
+            ("paid", "Оплаты по ЗН (все способы)", lambda: paid_table(run(Q_ORDER_PAID, PAID_COLS, full_start))),
             ("visits", "История визитов", lambda: visits_table(run(Q_VISITS, VISIT_COLS, EPOCH))),
             ("phones", "Телефоны клиентов", lambda: phones_table(run(Q_PHONES, PHONE_COLS, EPOCH))),
         ]
