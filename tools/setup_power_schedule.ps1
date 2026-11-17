@@ -22,14 +22,16 @@ if ($list -match $highStd) {
     $high = $Matches[1]
     Write-Host "Создана схема «Высокая производительность»: $high"
 }
-# Сервер не должен засыпать ни в одной схеме: в «Сбалансированной» у Windows по умолчанию
-# сон через 30 минут - сервер пропадал из сети около 20:09 (через полчаса после ухода последнего).
-# Ночью экономит только снижение частоты процессора; сон, гибернация и отключение дисков выключены.
+# Сервер не должен засыпать ни в одной схеме: в «Сбалансированной» у Windows по умолчанию сон
+# через 30 минут, а ночью идут резервная копия, отчёт по складу и удалённый доступ.
+# Ночью экономит только снижение частоты процессора; сон, гибернация, отключение дисков
+# и энергосбережение шины PCIe (из-за него может «засыпать» сетевая карта) выключены.
 foreach ($scheme in @($high, $balanced)) {
     powercfg /setacvalueindex $scheme SUB_SLEEP STANDBYIDLE 0 | Out-Null     # сон: никогда
     powercfg /setacvalueindex $scheme SUB_SLEEP HIBERNATEIDLE 0 | Out-Null   # гибернация: никогда
     powercfg /setacvalueindex $scheme SUB_SLEEP HYBRIDSLEEP 0 | Out-Null     # гибридный сон: выкл
     powercfg /setacvalueindex $scheme SUB_DISK DISKIDLE 0 | Out-Null         # диски не отключать
+    powercfg /setacvalueindex $scheme SUB_PCIEXPRESS ASPM 0 | Out-Null       # PCIe (сетевая карта): без энергосбережения
 }
 powercfg /hibernate off | Out-Null
 Write-Host "Дневная схема: $high"
@@ -40,9 +42,9 @@ $dir = 'C:\avtootchet\power'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $pick = Join-Path $dir 'power_by_time.ps1'
 @"
-# 09:00-19:00 - высокая производительность, иначе сбалансированная
-`$h = (Get-Date).Hour
-if (`$h -ge 9 -and `$h -lt 19) { powercfg /setactive $high } else { powercfg /setactive $balanced }
+# 08:50-19:10 - высокая производительность, иначе сбалансированная (как задачи «день» и «ночь»)
+`$m = (Get-Date).Hour * 60 + (Get-Date).Minute
+if (`$m -ge 530 -and `$m -lt 1150) { powercfg /setactive $high } else { powercfg /setactive $balanced }
 "@ | Set-Content -Path $pick -Encoding UTF8
 
 # 3. Задания планировщика (от SYSTEM, пароль не нужен)
@@ -54,5 +56,9 @@ schtasks /Create /TN "АвтоОтчёт - питание при включен�
 & powershell -NoProfile -ExecutionPolicy Bypass -File $pick
 Write-Host ''
 Write-Host ('Сейчас активна: ' + (powercfg /getactivescheme)) -ForegroundColor Green
-Write-Host 'Сон в ночной схеме, от сети (0x00000000 = никогда):'
-powercfg /query $balanced SUB_SLEEP STANDBYIDLE | Select-String 'AC|переменного'
+foreach ($pair in @(@('Дневная', $high), @('Ночная', $balanced))) {
+    $vals = [regex]::Matches((powercfg /query $pair[1] SUB_SLEEP STANDBYIDLE | Out-String), '0x[0-9a-fA-F]{8}')
+    $ac = if ($vals.Count -ge 2) { [Convert]::ToInt32($vals[$vals.Count - 2].Value, 16) } else { -1 }
+    $txt = if ($ac -eq 0) { 'сон выключен' } elseif ($ac -gt 0) { "СОН ЧЕРЕЗ $([int]($ac / 60)) МИН" } else { 'не удалось прочитать' }
+    Write-Host ("{0} схема: {1}" -f $pair[0], $txt)
+}
