@@ -255,6 +255,17 @@ def req(path, data=None, cookie=""):
 
 code, body, hdr = req("/")
 assert code == 200 and b"ACMineevo" in body and "default-src 'self'" in hdr["Content-Security-Policy"]
+from avtootchet import __version__  # noqa: E402
+from avtootchet.vitrina import restart as R  # noqa: E402
+assert hdr["X-Vitrina-Version"] == __version__
+assert R.site_version(httpd.server_address[1]) == __version__
+# перезапуск: останавливаются все сайты (--serve и кто держит порт), но не окна, сборы и сама программа
+procs = [R.Proc(10, "ACMineevo-Vitrina.exe", ["C:\\a\\ACMineevo-Vitrina.exe", "--serve"]),
+         R.Proc(11, "ACMineevo-Vitrina.exe", ["C:\\a\\ACMineevo-Vitrina.exe"]),                 # окно
+         R.Proc(12, "ACMineevo-Vitrina.exe", ["C:\\a\\ACMineevo-Vitrina.exe", "--collect-today"]),
+         R.Proc(13, "python.exe", ["python", "x.py"], listens=True),                           # чужой на порту
+         R.Proc(14, "ACMineevo-Vitrina.exe", ["C:\\a\\ACMineevo-Vitrina.exe", "--serve"])]   # это мы
+assert [p.pid for p in R.choose_targets(procs, {14})] == [10, 13]
 assert req("/api/home")[0] == 401
 assert req("/api/login", {"password": "wrong"})[0] == 401
 
