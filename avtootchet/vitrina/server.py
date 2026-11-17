@@ -15,6 +15,8 @@ import hmac
 import json
 import os
 import secrets
+import socket
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -265,7 +267,19 @@ def make_handler(app: App):
     return Handler
 
 
+class ExclusiveServer(ThreadingHTTPServer):
+    """На Windows SO_REUSEADDR (по умолчанию у HTTPServer) разрешает второму процессу занять тот же
+    порт - тогда отвечает то старая, то новая витрина. Порт занимается монопольно: второй запуск
+    сразу падает с ошибкой «порт занят» в журнале."""
+    allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self):
+        if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def serve(app: App, host: str, port: int) -> ThreadingHTTPServer:
-    httpd = ThreadingHTTPServer((host, port), make_handler(app))
+    httpd = ExclusiveServer((host, port), make_handler(app))
     httpd.daemon_threads = True
     return httpd

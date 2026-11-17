@@ -89,7 +89,11 @@ def do_serve(s, journal: Journal, path: Path | None = None, port: int | None = N
     from .server import serve  # noqa: PLC0415
     site = s["site"]
     port = port or int(site.get("port") or 8765)
-    httpd = serve(make_app(s, path, demo), site.get("host") or "0.0.0.0", port)
+    try:
+        httpd = serve(make_app(s, path, demo), site.get("host") or "0.0.0.0", port)
+    except OSError as e:
+        journal.write("Сайт витрины не запущен", f"порт {port} занят другим процессом ({e})")
+        raise
     journal.write("Сайт витрины запущен", f"порт {port}")
     try:
         httpd.serve_forever()

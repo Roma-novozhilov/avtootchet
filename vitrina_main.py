@@ -1,6 +1,6 @@
 import sys
 
-if any(a in sys.argv for a in ("--collect", "--serve", "--demo")):
+if any(a in sys.argv for a in ("--collect", "--collect-today", "--serve", "--demo")):
     # задачи Windows: без окна и без Qt
     from avtootchet.vitrina.runner import main
 
