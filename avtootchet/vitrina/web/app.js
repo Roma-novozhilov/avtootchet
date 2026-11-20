@@ -405,8 +405,34 @@ async function renderQuality(v) {
       <div class="stat"><div class="v">${at(q.collected_at)}</div><div class="t">полный сбор</div></div>
       <div class="stat"><div class="v">${at(q.updated_at)}</div><div class="t">дневное обновление (10, 13, 16, 19)</div></div>
     </div>${errs.length ? `<p class="error">Не загрузились: ${errs.map(([k, e]) => `${esc(k)} (${esc(e).slice(0, 120)})`).join("; ")}</p>` : ""}</div>
-    <div class="card"><h3>Что не заполнено и где хвосты</h3><p class="sub">Нажмите — список, который можно исправить в Далионе (витрина только читает, ничего не меняет).</p><div class="problems">${q.items.map(countCard).join("")}</div></div>`;
+    <div class="card"><h3>Что не заполнено и где хвосты</h3><p class="sub">Нажмите — список, который можно исправить в Далионе (витрина только читает, ничего не меняет).</p><div class="problems">${q.items.map(countCard).join("")}</div></div>
+    <div id="calls-acc"><p class="muted">Загружаю учёт звонков…</p></div>`;
   bindLists(v);
+  const a = await api("/api/calls_acc");
+  $("#calls-acc").innerHTML = callsAccounting(a);
+}
+function callsAccounting(a) {
+  const s = a.stats;
+  const fieldText = (x) => (x ? `«${esc(x.title || x.name)}» заполнено в ${pctText(x.pct)} звонков` : "поле не найдено");
+  const verdict = a.fields.length
+    ? `<ul class="sub"><li>Запись разговора: ${fieldText(a.record_field)}.</li><li>Итог / комментарий к звонку: ${fieldText(a.note_field)}.</li></ul>`
+    : `<p class="sub">${a.fields_error ? `Поля звонка не прочитались: ${esc(a.fields_error).slice(0, 200)}` : "Поля звонка появятся после следующего полного сбора (утром в 6:00 или кнопкой «Собрать данные сейчас»)."}</p>`;
+  const pctf = (x) => pctText(x);
+  return `
+    <div class="card"><h3>Учёт звонков в Далионе</h3><p class="sub">Попадают ли звонки в Далион и с чем: клиент, менеджер, перезвон. За выбранный период.</p>
+      <div class="stats">
+        <div class="stat"><div class="v">${num(s.total)}</div><div class="t">звонков в Далионе (вход. ${num(s.incoming)}, исх. ${num(s.outgoing)}${s.unknown_dir ? `, непонятных ${num(s.unknown_dir)}` : ""})</div></div>
+        <div class="stat"><div class="v">${pctText(s.answered_linked_pct)}</div><div class="t">принятых входящих привязаны к карточке клиента (${num(s.answered_linked)} из ${num(s.answered)})</div></div>
+        <div class="stat"><div class="v">${pctText(s.outgoing_linked_pct)}</div><div class="t">исходящих привязаны к карточке (${num(s.outgoing_linked)} из ${num(s.outgoing)})</div></div>
+        <div class="stat"><div class="v">${pctText(s.missed_callback_pct)}</div><div class="t">пропущенных — потом связались за 72 ч (${num(s.missed_callback)} из ${num(s.missed)})</div></div>
+        <div class="stat"><div class="v">${num(s.no_user)}</div><div class="t">звонков без пользователя Далиона</div></div>
+      </div></div>
+    <div class="grid">
+      <div class="card"><h3>По пользователям Далиона</h3>${table([{ key: "name", title: "Пользователь" }, { key: "answered", title: "Принято", num: true }, { key: "missed", title: "Пропущено", num: true }, { key: "outgoing", title: "Исходящих", num: true }, { key: "linked_pct", title: "Принятые с карточкой", num: true, fmt: pctf }], a.by_user)}</div>
+      <div class="card"><h3>По линиям</h3>${table([{ key: "name", title: "Линия" }, { key: "answered", title: "Принято", num: true }, { key: "missed", title: "Пропущено", num: true }, { key: "outgoing", title: "Исходящих", num: true }, { key: "linked_pct", title: "Принятые с карточкой", num: true, fmt: pctf }], a.by_line)}</div>
+    </div>
+    <div class="card"><h3>Что Далион пишет в звонок</h3><p class="sub">Все поля «Истории звонков» и в скольких звонках они заполнены — за 30 дней до последнего полного сбора${a.fields_total !== null ? ` (${num(a.fields_total)} звонков)` : ""}. Только количества, без содержимого.</p>${verdict}
+      ${a.fields.length ? table([{ key: "title", title: "Поле", fmt: (t, r) => t || r.name }, { key: "name", title: "Имя в 1С" }, { key: "kind", title: "Тип" }, { key: "role", title: "Похоже на" }, { key: "filled", title: "Заполнено", num: true }, { key: "pct", title: "%", num: true, fmt: pctf }], a.fields) : ""}</div>`;
 }
 const RENDER = { funnel: renderFunnel, clients: renderClients, quality: renderQuality, home: renderHome, problems: renderProblems, telephony: renderTelephony, managers: renderManagers, finance: renderFinance };
 

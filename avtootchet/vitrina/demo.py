@@ -176,8 +176,14 @@ def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tu
     for o in orders:
         if o.get("issued") and not o.get("deleted"):
             visits.append({"client_code": o["client_code"], "day": o["issued"][:10], "type": o["type"]})
+    n30 = sum(1 for c in calls if c["start"] >= _iso(now - timedelta(days=30)))
+    call_fields = [{"name": n, "title": t, "kind": k, "filled": round(n30 * share), "total": n30}
+                   for n, t, k, share in (("Контрагент", "Контрагент", "ссылка: Контрагенты", 0.74),
+                                          ("Пользователь", "Пользователь", "ссылка: Пользователи", 0.98),
+                                          ("ПутьКФайлу", "Путь к файлу", "Строка", 0.0),
+                                          ("Комментарий", "Комментарий", "Строка", 0.03))]
     tables = {"calls": calls, "orders": orders, "payments": payments, "works": works, "tasks": tasks,
-              "visits": visits, "clients": cards, "phones": phones}
+              "visits": visits, "clients": cards, "phones": phones, "call_fields": call_fields}
     meta = {"collected_at": _iso(now), "from": start.strftime("%Y-%m-%d"), "to": now.strftime("%Y-%m-%d"),
             "errors": {}, "demo": True, "counts": {k: len(v) for k, v in tables.items()}}
     return tables, meta

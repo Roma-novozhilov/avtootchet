@@ -12,6 +12,8 @@
   clients   - карточки контрагентов: код, название, когда и кем заведена, вид, источник;
   paid      - оплаты по ЗН всеми способами (кассы и расчётный счёт) - для «выдан, не оплачен»;
   phones    - телефоны карточек (только последние 10 цифр - для поиска дублей и звонков);
+  call_fields - поля регистра «История звонков» и сколько звонков за 30 дней их заполнили
+              (только количества - без значений);
   meta      - когда собрано, за какой период, ошибки разделов.
 """
 from __future__ import annotations
@@ -35,8 +37,9 @@ SCHEMA = {
     "clients": ["code", "name", "created", "author", "kind", "source", "deleted"],
     "phones": ["code", "phone"],
     "paid": ["number", "amount"],
+    "call_fields": ["name", "title", "kind", "filled", "total"],
 }
-NUMERIC = {"dur", "wait", "callback_min", "amount", "works", "parts", "materials", "orders", "hours_to_done"}
+NUMERIC = {"dur", "wait", "callback_min", "amount", "works", "parts", "materials", "orders", "hours_to_done", "filled", "total"}
 
 
 def write_db(path: Path, tables: dict[str, list[dict]], meta: dict) -> None:

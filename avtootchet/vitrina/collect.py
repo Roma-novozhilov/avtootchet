@@ -19,6 +19,7 @@ from ..marketing.export import (CALL_COLS, CALLBACK_HOURS, Q_CALLS, Q_TASKS, TAS
                                 build_calls, build_tasks, _dt, _int, _s)
 from ..owner.revenue import classify_cashbox
 from ..common.comdate import inline_dates
+from .callfields import collect_call_fields
 from .db import read_db, write_db
 
 Q_ORDERS = """ВЫБРАТЬ
@@ -415,6 +416,7 @@ def collect(conn, months: int, dirs: Directions, now: datetime | None = None,
             ("paid", "Оплаты по ЗН (все способы)", lambda: paid_table(run(Q_ORDER_PAID, PAID_COLS, full_start))),
             ("visits", "История визитов", lambda: visits_table(run(Q_VISITS, VISIT_COLS, EPOCH))),
             ("phones", "Телефоны клиентов", lambda: phones_table(run(Q_PHONES, PHONE_COLS, EPOCH))),
+            ("call_fields", "Поля звонков", lambda: collect_call_fields(conn, midnight - timedelta(days=30), end)),
         ]
     for key, title, fn in sections:
         try:
