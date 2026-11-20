@@ -87,6 +87,7 @@ class Data:
     clients: dict = field(default_factory=dict)            # код -> карточка
     card_phones: dict = field(default_factory=dict)        # код -> [телефоны]
     order_paid: dict = field(default_factory=dict)         # № ЗН -> оплачено всеми способами
+    call_fields: list = field(default_factory=list)        # поля «Истории звонков» и их заполненность
     meta: dict = field(default_factory=dict)
     lines: dict = field(default_factory=dict)       # кусок номера линии -> название («21» -> «Авито»)
     full_phones: bool = False
@@ -147,6 +148,7 @@ class Data:
             t["done"] = t["done"] in (1, True, "1")
             if t["_t"]:
                 d.tasks.append(t)
+        d.call_fields = [dict(r) for r in tables.get("call_fields", [])]
         d._index()
         return d
 

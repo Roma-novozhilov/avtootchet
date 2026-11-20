@@ -170,6 +170,8 @@ class App:
             return 200, {**fn, "bookings": P.bookings_summary(d, f, now)}
         if path == "/api/quality":
             return 200, P.quality(d, f, now)
+        if path == "/api/calls_acc":
+            return 200, P.call_accounting(d, f)
         if path == "/api/list":
             key = q.get("key", [""])[0]
             try:

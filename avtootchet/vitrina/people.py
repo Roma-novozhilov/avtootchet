@@ -432,6 +432,73 @@ def quality(d: Data, f: Filters, now: datetime) -> dict:
             "errors": d.meta.get("errors", {})}
 
 
+# ---------------------------------------------------------------------------- 6. учёт звонков
+# Роль поля - по имени и синониму: чтобы на странице сразу было видно «запись разговора» и «итог».
+FIELD_ROLES = [
+    ("запись разговора", re.compile(r"файл|запис|audio|record|путь", re.I)),
+    ("итог / комментарий", re.compile(r"коммент|результат|итог|примеч|описан|тема", re.I)),
+    ("клиент", re.compile(r"контрагент|клиент|контакт|лид", re.I)),
+    ("менеджер", re.compile(r"пользовател|менеджер|сотрудник|ответствен", re.I)),
+]
+
+
+def field_role(name: str, title: str) -> str:
+    text = f"{name} {title}"
+    return next((role for role, rx in FIELD_ROLES if rx.search(text)), "")
+
+
+def call_accounting(d: Data, f: Filters) -> dict:
+    """Насколько полно звонки записаны в Далионе: связь с клиентом, менеджер, направление,
+    перезвоны - по звонкам за период; какие поля звонка вообще заполняются - за 30 дней до сбора."""
+    calls = d.calls_in(f)
+    inc = _incoming(calls)
+    ans = [c for c in inc if not c["missed"]]
+    missed = [c for c in inc if c["missed"]]
+    out = [c for c in calls if c.get("dir") == "out"]
+    linked = lambda cs: sum(1 for c in cs if c.get("client_code"))  # noqa: E731
+    stats = {
+        "total": len(calls), "incoming": len(inc), "answered": len(ans), "missed": len(missed), "outgoing": len(out),
+        "unknown_dir": sum(1 for c in calls if c.get("dir") not in ("in", "out")),
+        "answered_linked": linked(ans), "answered_linked_pct": pct(linked(ans), len(ans)),
+        "outgoing_linked": linked(out), "outgoing_linked_pct": pct(linked(out), len(out)),
+        "answered_known_number": sum(1 for c in ans if not d.person(c).startswith("p:")),
+        "no_user": sum(1 for c in calls if not (c.get("user") or "").strip()),
+        "missed_callback": sum(1 for c in missed if c.get("callback") == "да"),
+        "missed_no_callback": sum(1 for c in missed if c.get("callback") == "нет"),
+    }
+    stats["missed_callback_pct"] = pct(stats["missed_callback"], len(missed))
+    users: dict[str, Counter] = defaultdict(Counter)
+    lines: dict[str, Counter] = defaultdict(Counter)
+    for c in calls:
+        u, ln = users[c.get("user") or "(не указан)"], lines[c.get("line_name") or c.get("line") or "(не указана)"]
+        for x in (u, ln):
+            if c.get("dir") == "in":
+                x["missed" if c["missed"] else "answered"] += 1
+                x["linked"] += (not c["missed"]) and bool(c.get("client_code"))
+            elif c.get("dir") == "out":
+                x["outgoing"] += 1
+    def rows(src):
+        return [{"name": k, "answered": v["answered"], "missed": v["missed"], "outgoing": v["outgoing"],
+                 "linked_pct": pct(v["linked"], v["answered"])}
+                for k, v in sorted(src.items(), key=lambda kv: -(sum(kv[1].values())))]
+    fields = []
+    for r in d.call_fields:
+        filled = r.get("filled")
+        total = r.get("total") or 0
+        fields.append({"name": r.get("name") or "", "title": r.get("title") or "", "kind": r.get("kind") or "",
+                       "role": field_role(r.get("name") or "", r.get("title") or ""),
+                       "filled": None if filled is None else int(filled), "total": int(total),
+                       "pct": None if filled is None else pct(int(filled), int(total))})
+    def best(role):
+        cand = [x for x in fields if x["role"] == role]
+        return max(cand, key=lambda x: x["filled"] or 0) if cand else None
+    rec, note = best("запись разговора"), best("итог / комментарий")
+    return {"stats": stats, "by_user": rows(users), "by_line": rows(lines), "fields": fields,
+            "fields_total": fields[0]["total"] if fields else None,
+            "record_field": rec, "note_field": note,
+            "fields_error": d.meta.get("errors", {}).get("Поля звонков")}
+
+
 def stale_bookings(d: Data, now: datetime) -> list[dict]:
     return [o for o in d.orders if PRELIM in (o.get("status") or "").lower()
             and ((o["_plan"] or o["_t"]) < now - timedelta(days=STALE_BOOKING_DAYS))]

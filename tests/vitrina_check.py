@@ -55,13 +55,69 @@ class Query:
         raise AssertionError("неизвестный запрос")
 
 
+class Coll:
+    def __init__(self, items):
+        self.items = items
+
+    def Count(self):  # noqa: N802
+        return len(self.items)
+
+    def Get(self, i):  # noqa: N802
+        return self.items[i]
+
+
+class FType:
+    def __init__(self, text, refs=()):
+        self.text, self.refs = text, list(refs)
+
+    def Types(self):  # noqa: N802
+        return Coll(self.refs or [self.text])
+
+
+class FAttr:
+    def __init__(self, name, syn, ftype):
+        self.Name, self.Synonym, self.Type = name, syn, ftype
+
+
+class FRef:
+    def __init__(self, full):
+        self.full = full
+
+    def FullName(self):  # noqa: N802
+        return self.full
+
+
+class FRegs:
+    def Find(self, name):  # noqa: N802
+        if name != "пз_ИсторияЗвонков":
+            return None
+        return type("Reg", (), {"Dimensions": Coll([]), "Resources": Coll([]), "Attributes": Coll([
+            FAttr("ПутьКФайлу", "Путь к файлу записи", FType("Строка")),
+            FAttr("Комментарий", "", FType("Строка")),
+            FAttr("Контрагент", "Контрагент", FType("Справочник ссылка.Контрагенты", ["Справочник.Контрагенты"])),
+            FAttr("Странное", "", FType("ХранилищеЗначения")),
+        ])})()
+
+
+class FMeta:
+    InformationRegisters = FRegs()
+
+    def FindByType(self, t):  # noqa: N802
+        return FRef(t) if "." in t else None
+
+
 class Conn:
+    Metadata = FMeta()
+
     def __init__(self, answers):
         self.answers = answers
 
     def NewObject(self, name):  # noqa: N802
         assert name == "Запрос"
         return Query(self)
+
+    def String(self, v):  # noqa: N802
+        return getattr(v, "text", str(v))
 
 
 def call(uid, t, code, dur, frm="", to="", client="Клиент А", ccode="0001", end=None):
@@ -116,7 +172,11 @@ PHONES = [{"Код": "0001", "Телефон": "+7 (910) 111-22-33"}, {"Код":
 
 PAID = [{"Знак": 1, "Номер": "ЗН1", "Сумма": 7000}, {"Знак": 1, "Номер": "ЗН1", "Сумма": 1500},   # касса + р/с
         {"Знак": -1, "Номер": "ЗН1", "Сумма": 500}, {"Знак": 1, "Номер": None, "Сумма": 100}]
-conn = Conn({"ВЫРАЗИТЬ(П.ДокументОснование": PAID, "З.ПометкаУдаления КАК Удален": EXTRA, "НАЧАЛОПЕРИОДА(З.Дата, ДЕНЬ) КАК День": VISITS,
+conn = Conn({"ПОДСТРОКА(Т.ПутьКФайлу": [{"Кол": 3}], "ПОДСТРОКА(Т.Комментарий": [{"Кол": 0}],
+             "Т.Контрагент <> ЗНАЧЕНИЕ(Справочник.Контрагенты.ПустаяСсылка)": [{"Кол": 3}],
+             "Т.Странное <> НЕОПРЕДЕЛЕНО": RuntimeError("нельзя сравнивать"),
+             "КАК Кол ИЗ РегистрСведений.пз_ИсторияЗвонков": [{"Кол": 4}],
+             "ВЫРАЗИТЬ(П.ДокументОснование": PAID, "З.ПометкаУдаления КАК Удален": EXTRA, "НАЧАЛОПЕРИОДА(З.Дата, ДЕНЬ) КАК День": VISITS,
              "ТелефоныДляБыстрогоПоиска": PHONES, "Справочник.Контрагенты КАК К": CLIENTS,
              "пз_ИсторияЗвонков": CALLS, "З.ДатаСоздания КАК Создан": ORDERS, "ПОМЕСТИТЬ ВТ_П": PAYMENTS,
              "ЗаказНаряд.Услуги КАК У": RuntimeError("Поле не найдено «Работа»"),
@@ -137,6 +197,10 @@ assert o["ЗН2"]["deleted"] == "да" and o["ЗН2"]["refusal"] == "Дорог�
 assert len(tables["visits"]) == 3                                     # без пустого клиента
 assert tables["phones"] == [{"code": "0001", "phone": "9101112233"}, {"code": "0005", "phone": "9107770000"}]
 assert len(tables["clients"]) == 3
+cf = {r["name"]: r for r in tables["call_fields"]}
+assert (cf["ПутьКФайлу"]["filled"], cf["ПутьКФайлу"]["total"]) == (3, 4), cf
+assert cf["Комментарий"]["filled"] == 0 and cf["Контрагент"]["kind"] == "ссылка: Контрагенты"
+assert cf["Странное"]["filled"] is None                                # поле не сравнить - без числа, сбор цел
 print("сбор: OK")
 
 # дневное обновление: свежие строки подменяют утренние, старые остаются; упавший раздел не трогается
@@ -193,6 +257,11 @@ g = P.client_groups(d, f)
 assert g["_lists"]["g_returned"] == ["0001"] and g["_lists"]["g_never"] == ["0002", "0005"], g["_lists"]
 dup = P.duplicates(d)
 assert dup["name"] == [["0002", "0005"]], dup                          # «Клиент Б» и «Клиент  б»
+ca = P.call_accounting(d, f)
+assert (ca["stats"]["answered"], ca["stats"]["missed"], ca["stats"]["outgoing"]) == (1, 2, 1), ca["stats"]
+assert ca["record_field"]["name"] == "ПутьКФайлу" and ca["record_field"]["pct"] == 75, ca["record_field"]
+assert ca["note_field"]["name"] == "Комментарий" and ca["fields_total"] == 4
+assert {r["role"] for r in ca["fields"]} >= {"запись разговора", "итог / комментарий", "клиент"}
 q = {i["key"]: i["count"] for i in P.quality(d, f, NOW)["items"]}
 assert q["q_no_phone"] == 1 and q["q_dup_name"] == 1, q
 path = M.client_path(d, M.MARKETER, call_id="c4", now=NOW)
@@ -286,7 +355,7 @@ assert req("/api/finance", cookie=owner)[0] == 200
 assert req("/api/list?key=unpaid", cookie=market)[0] == 403
 assert req("/api/list?key=nope", cookie=owner)[0] == 404
 assert req("/api/meta", cookie=owner)[0] == 200
-for pth in ("/api/funnel", "/api/clients", "/api/quality", "/api/list?key=g_sleeping", "/api/list?key=" + urllib.parse.quote("o:выдан")):
+for pth in ("/api/funnel", "/api/clients", "/api/quality", "/api/calls_acc", "/api/list?key=g_sleeping", "/api/list?key=" + urllib.parse.quote("o:выдан")):
     code, body, _ = req(pth + ("&" if "?" in pth else "?") + "from=2026-10-15&to=2026-11-13", cookie=market)
     assert code == 200 and '"amount"' not in body.decode(), (pth, body[:200])
     assert "_lists" not in body.decode()
