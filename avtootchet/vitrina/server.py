@@ -1,8 +1,8 @@
 """Веб-сервер витрины: страница и JSON для неё. Только стандартная библиотека Python.
 
-* Вход по паролю. Паролей два: «владелец» (всё) и «маркетолог» (без денег). Хранятся только
-  отпечатки PBKDF2 - как пароль на вход в программы ACMineevo.
-* После 5 неверных паролей с одного адреса вход с него закрыт на 5 минут.
+* Вход по логину и паролю. У каждого пользователя роль: «владелец» (всё) или «маркетолог» (без денег).
+  Хранятся только отпечатки PBKDF2 - как пароль на вход в программы ACMineevo. Логин без учёта регистра.
+* После 5 неверных попыток с одного адреса вход с него закрыт на 5 минут.
 * Сеанс - случайный ключ в cookie (HttpOnly, SameSite=Strict), живёт 12 часов, хранится в памяти:
   после перезапуска сервера войти нужно заново.
 * Данные берутся из файла витрины; когда сбор в 6:00 его заменит, сервер перечитает сам.
@@ -83,29 +83,47 @@ class Store:
             return self._data
 
 
+_DUMMY_LOCK = make_lock("-")     # чтобы неверный логин проверялся так же долго, как неверный пароль
+
+
+def norm_login(login: str) -> str:
+    return " ".join((login or "").split()).lower()
+
+
 class App:
-    def __init__(self, store: Store, locks: dict, web_dir: Path, now=datetime.now):
-        self.store, self.locks, self.web_dir, self.now = store, locks, Path(web_dir), now
-        self.sessions: dict[str, tuple[str, float]] = {}
+    """users: {логин в нижнем регистре: {"login": как ввели при создании, "role": owner|marketer, "lock": {...}}}.
+    special: слова для отдельных строк в «Финансах» (гарантия, личные автомобили)."""
+
+    def __init__(self, store: Store, users: dict, web_dir: Path, now=datetime.now, special: dict | None = None):
+        self.store, self.users, self.web_dir, self.now = store, users, Path(web_dir), now
+        self.special = special or {}
+        self.sessions: dict[str, tuple[str, float, str]] = {}
         self.fails: dict[str, list[float]] = {}
         self._lock = threading.Lock()
 
     # -------------------------------------------------------------- сеансы
-    def login(self, ip: str, password: str) -> str | None:
+    def login(self, ip: str, login: str, password: str) -> str | None:
         with self._lock:
             recent = [t for t in self.fails.get(ip, []) if time.time() - t < LOCK_SECONDS]
             self.fails[ip] = recent
             if len(recent) >= MAX_FAILS:
-                raise PermissionError("Слишком много неверных паролей. Попробуйте через 5 минут.")
-        role = next((r for r in (M.OWNER, M.MARKETER) if check_lock(self.locks.get(r), password)), None)
+                raise PermissionError("Слишком много неверных попыток. Попробуйте через 5 минут.")
+        user = self.users.get(norm_login(login))
+        ok = check_lock((user or {}).get("lock") or _DUMMY_LOCK, password) and user is not None \
+            and user.get("role") in (M.OWNER, M.MARKETER)
         with self._lock:
-            if role is None:
+            if not ok:
                 self.fails.setdefault(ip, []).append(time.time())
                 return None
             self.fails.pop(ip, None)
             token = secrets.token_urlsafe(32)
-            self.sessions[token] = (role, time.time() + SESSION_HOURS * 3600)
+            self.sessions[token] = (user["role"], time.time() + SESSION_HOURS * 3600, user.get("login") or login)
             return token
+
+    def user_name(self, token: str | None) -> str:
+        with self._lock:
+            item = self.sessions.get(token or "")
+            return item[2] if item else ""
 
     def role(self, token: str | None) -> str | None:
         if not token:
@@ -139,17 +157,17 @@ class App:
             d1 = d2 - timedelta(days=400)
         return M.Filters(d1, d2, q.get("user", [""])[0], q.get("line", [""])[0])
 
-    def api(self, path: str, q: dict, role: str):
+    def api(self, path: str, q: dict, role: str, user: str = ""):
         d = self.store.get()
         if d is None:
             if path == "/api/meta":   # войти можно и без данных - страница объяснит, что делать
-                return 200, {"role": role, "meta": {"nodata": True, "file": str(self.store.path)},
+                return 200, {"role": role, "user": user, "meta": {"nodata": True, "file": str(self.store.path)},
                              "options": {"users": [], "lines": []}}
             return 503, {"error": NO_DATA}
         f, now = self.filters(q), self.now()
         if path == "/api/meta":
             meta = dict(d.meta)
-            return 200, {"role": role, "meta": meta, "options": M.filter_options(d)}
+            return 200, {"role": role, "user": user, "meta": meta, "options": M.filter_options(d)}
         if path == "/api/home":
             return 200, M.home(d, f, role, now)
         if path == "/api/telephony":
@@ -159,7 +177,7 @@ class App:
         if path == "/api/finance":
             if role != M.OWNER:
                 return 403, {"error": "Раздел доступен только владельцу."}
-            return 200, M.finance(d, f)
+            return 200, M.finance(d, f, self.special)
         if path == "/api/clients":
             groups = P.client_groups(d, f)
             groups.pop("_lists", None)
@@ -240,7 +258,7 @@ def make_handler(app: App):
                 if not role:
                     return self._json(401, {"error": "Нужно войти."})
                 try:
-                    code, obj = app.api(url.path, parse_qs(url.query), role)
+                    code, obj = app.api(url.path, parse_qs(url.query), role, app.user_name(self._token()))
                 except Exception as e:  # noqa: BLE001 - ошибка расчёта не должна ронять сервер
                     code, obj = 500, {"error": f"Ошибка расчёта: {type(e).__name__}: {e}"}
                 return self._json(code, obj, role=role)
@@ -252,15 +270,16 @@ def make_handler(app: App):
             raw = self.rfile.read(n) if n else b""
             if url.path == "/api/login":
                 try:
-                    password = str(json.loads(raw or b"{}").get("password", ""))
-                except ValueError:
-                    password = ""
+                    body = json.loads(raw or b"{}")
+                    login, password = str(body.get("login", "")), str(body.get("password", ""))
+                except (ValueError, AttributeError):
+                    login, password = "", ""
                 try:
-                    token = app.login(self.client_address[0], password)
+                    token = app.login(self.client_address[0], login, password)
                 except PermissionError as e:
                     return self._json(429, {"error": str(e)})
                 if not token:
-                    return self._json(401, {"error": "Неверный пароль."})
+                    return self._json(401, {"error": "Неверный логин или пароль."})
                 cookie = f"vs={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_HOURS * 3600}"
                 return self._json(200, {"ok": True, "role": app.role(token)}, {"Set-Cookie": cookie})
             if url.path == "/api/logout":

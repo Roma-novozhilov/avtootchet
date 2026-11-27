@@ -21,6 +21,7 @@ from avtootchet.vitrina import metrics as M  # noqa: E402
 from avtootchet.vitrina.db import read_db, write_db  # noqa: E402
 from avtootchet.vitrina.demo import make_demo  # noqa: E402
 from avtootchet.vitrina.server import App, Store, make_lock, serve  # noqa: E402
+from avtootchet.vitrina import runner as RN  # noqa: E402
 
 NOW = datetime(2026, 11, 13, 13, 0)
 EMPTY = datetime(1, 1, 1)
@@ -99,8 +100,17 @@ class FRegs:
         ])})()
 
 
+class FDocs:
+    def Find(self, name):  # noqa: N802
+        if name != "ЗаказНаряд":
+            return None
+        return type("Doc", (), {"Attributes": Coll([FAttr("Менеджер", "Менеджер", FType("Справочник ссылка.Пользователи")),
+                                                     FAttr("ВидЗН", "Вид", FType("Справочник ссылка.ВидыЗН"))])})()
+
+
 class FMeta:
     InformationRegisters = FRegs()
+    Documents = FDocs()
 
     def FindByType(self, t):  # noqa: N802
         return FRef(t) if "." in t else None
@@ -170,9 +180,16 @@ CLIENTS = [{"Код": "0001", "Наименование": "Клиент А", "С
 PHONES = [{"Код": "0001", "Телефон": "+7 (910) 111-22-33"}, {"Код": "0005", "Телефон": "8-910-777-00-00"},
           {"Код": "0001", "Телефон": "89101112233"}]
 
+KINDS = [{"Номер": "ЗН1", "Вид": "Гарантия"}]
 PAID = [{"Знак": 1, "Номер": "ЗН1", "Сумма": 7000}, {"Знак": 1, "Номер": "ЗН1", "Сумма": 1500},   # касса + р/с
         {"Знак": -1, "Номер": "ЗН1", "Сумма": 500}, {"Знак": 1, "Номер": None, "Сумма": 100}]
-conn = Conn({"ПОДСТРОКА(Т.ПутьКФайлу": [{"Кол": 3}], "ПОДСТРОКА(Т.Комментарий": [{"Кол": 0}],
+conn = Conn({"ДенежныеСредства.Остатки": [
+                 {"Счет": "Касса сервиса", "Вид": "Касса", "Организация": "ИП Н", "Карты": False, "Валюта": "руб.", "Остаток": 1500.5},
+                 {"Счет": "Эквайринг", "Вид": "Касса", "Организация": "ИП Н", "Карты": True, "Валюта": "руб.", "Остаток": 300},
+                 {"Счет": "Р/с Сбер", "Вид": "Расчётный счёт", "Организация": "", "Карты": False, "Валюта": "руб.", "Остаток": 0.001},
+                 {"Счет": "Р/с Альфа", "Вид": "Расчётный счёт", "Организация": "", "Карты": False, "Валюта": "руб.", "Остаток": 2000}],
+             "ПРЕДСТАВЛЕНИЕ(З.ВидЗН) КАК Вид": KINDS,
+             "ПОДСТРОКА(Т.ПутьКФайлу": [{"Кол": 3}], "ПОДСТРОКА(Т.Комментарий": [{"Кол": 0}],
              "Т.Контрагент <> ЗНАЧЕНИЕ(Справочник.Контрагенты.ПустаяСсылка)": [{"Кол": 3}],
              "Т.Странное <> НЕОПРЕДЕЛЕНО": RuntimeError("нельзя сравнивать"),
              "КАК Кол ИЗ РегистрСведений.пз_ИсторияЗвонков": [{"Кол": 4}],
@@ -201,12 +218,19 @@ cf = {r["name"]: r for r in tables["call_fields"]}
 assert (cf["ПутьКФайлу"]["filled"], cf["ПутьКФайлу"]["total"]) == (3, 4), cf
 assert cf["Комментарий"]["filled"] == 0 and cf["Контрагент"]["kind"] == "ссылка: Контрагенты"
 assert cf["Странное"]["filled"] is None                                # поле не сравнить - без числа, сбор цел
+assert o["ЗН1"]["kind"] == "Гарантия"                                   # «Вид» найден по синониму
+assert [(b["account"], b["kind"]) for b in tables["balances"]] == [
+    ("Касса сервиса", "Касса"), ("Эквайринг", "Касса (карты)"), ("Р/с Альфа", "Расчётный счёт")], tables["balances"]
+assert meta["balances_at"] == "2026-11-13 13:00", meta
 print("сбор: OK")
 
 # дневное обновление: свежие строки подменяют утренние, старые остаются; упавший раздел не трогается
 light_conn = Conn({"З.ПометкаУдаления КАК Удален": [], "Справочник.Контрагенты КАК К": [CLIENTS[2] | {"Наименование": "Новый"}],
                    "пз_ИсторияЗвонков": [call("c9", datetime(2026, 11, 13, 12), 0, 30)],
-                   "З.ДатаСоздания КАК Создан": [], "ПОМЕСТИТЬ ВТ_П": RuntimeError("занято"), "Справочник.Напоминания": []})
+                   "З.ДатаСоздания КАК Создан": [], "ПОМЕСТИТЬ ВТ_П": RuntimeError("занято"), "Справочник.Напоминания": [],
+                   "ПРЕДСТАВЛЕНИЕ(З.ВидЗН) КАК Вид": [],
+                   "ДенежныеСредства.Остатки": [{"Счет": "Касса сервиса", "Вид": "Касса", "Организация": "ИП Н",
+                                                 "Карты": False, "Валюта": "руб.", "Остаток": 999}]})
 lt, lm = C.collect(light_conn, 6, Directions.parse("0", "1"), now=NOW, light=True)
 assert "visits" not in lt and "works" not in lt and lm["cutoffs"]["calls"] == "2026-11-10 00:00:00", lm
 assert "Справочник.Контрагенты КАК К\nГДЕ" not in C.Q_CLIENTS and "&НачалоКарточек" in C.Q_CLIENTS_NEW
@@ -216,6 +240,7 @@ assert mt["payments"] == tables["payments"]                           # опла
 assert {c["code"]: c["name"] for c in mt["clients"]}["0005"] == "Новый" and len(mt["clients"]) == 3
 assert mt["visits"] == tables["visits"] and mm["updated_at"] == "2026-11-13 13:00:00"
 assert set(mm["errors"]) == {"Работы", "Оплаты"}, mm["errors"]
+assert [b["amount"] for b in mt["balances"]] == [999], mt["balances"]      # остатки - всегда свежие
 print("дневное обновление: OK")
 
 tmp = Path(tempfile.mkdtemp())
@@ -300,12 +325,20 @@ M.finance(demo, f30)
 M.managers(demo, f30, M.OWNER)
 path = M.client_path(demo, M.MARKETER, code=demo.orders[0]["client_code"])
 assert all(e["kind"] != "payment" for e in path["events"])
+assert M.strip_money({"balances": {"total": 5}, "x": 1}, M.MARKETER) == {"x": 1}
 print("роли: OK")
 
 # ------------------------------------------------------------------ сайт
 write_db(tmp / "demo.db", dt, dm)
-app = App(Store(tmp / "demo.db"), {"owner": make_lock("owner-pass"), "marketer": make_lock("market-pass")},
-          ROOT / "avtootchet" / "vitrina" / "web", now=lambda: NOW)
+# пользователи: новый список + старый пароль роли (до 0.12) для маркетолога -> логин «маркетолог»
+USERS = RN.site_users({"users": [{"login": "Саша", "role": "owner", "lock": make_lock("owner-pass")},
+                                 {"login": "Без роли", "role": "admin", "lock": make_lock("x-pass-123")}],
+                       "owner_lock": make_lock("old-owner"), "marketer_lock": make_lock("market-pass")})
+assert set(USERS) == {"саша", "маркетолог"}, USERS          # старый пароль владельца не нужен - есть «Саша»
+assert RN.special_rules({}) == {"warranty": ["гарант"], "personal": ["личн"]}
+assert RN.special_rules({"special": {"warranty": "Гарантия; ГАР", "personal": ""}})["warranty"] == ["гарантия", "гар"]
+app = App(Store(tmp / "demo.db"), USERS, ROOT / "avtootchet" / "vitrina" / "web", now=lambda: NOW,
+          special=RN.special_rules({}))
 httpd = serve(app, "127.0.0.1", 0)
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 base = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -336,16 +369,26 @@ procs = [R.Proc(10, "ACMineevo-Vitrina.exe", ["C:\\a\\ACMineevo-Vitrina.exe", "-
          R.Proc(14, "ACMineevo-Vitrina.exe", ["C:\\a\\ACMineevo-Vitrina.exe", "--serve"])]   # это мы
 assert [p.pid for p in R.choose_targets(procs, {14})] == [10, 13]
 assert req("/api/home")[0] == 401
-assert req("/api/login", {"password": "wrong"})[0] == 401
+assert req("/api/login", {"login": "Саша", "password": "wrong"})[0] == 401
+assert req("/api/login", {"password": "owner-pass"})[0] == 401                  # без логина нельзя
+assert req("/api/login", {"login": "маркетолог", "password": "owner-pass"})[0] == 401   # чужой пароль
 
 
-def login(pw):
-    code, body, hdr = req("/api/login", {"password": pw})
+def login(name, pw):
+    code, body, hdr = req("/api/login", {"login": name, "password": pw})
     assert code == 200, body
     return hdr["Set-Cookie"].split(";")[0]
 
 
-owner, market = login("owner-pass"), login("market-pass")
+owner, market = login("  саша ", "owner-pass"), login("Маркетолог", "market-pass")
+assert json.loads(req("/api/meta", cookie=owner)[1])["user"] == "Саша"
+fin = json.loads(req("/api/finance?from=2026-10-01&to=2026-11-13", cookie=owner)[1])
+names = [r["name"] for r in fin["special"]["rows"]]
+assert names == ["Гарантийные ремонты", "Ремонт личных автомобилей"], names
+assert sum(r["orders"] + r["open"] for r in fin["special"]["rows"]) > 0, fin["special"]["rows"]
+assert any(k["special"] == "Гарантийные ремонты" for k in fin["special"]["kinds"])
+assert fin["balances"]["total"] == round(48_250 + 12_900 + 31_400 + 612_780.55, 2), fin["balances"]
+assert {t["kind"] for t in fin["balances"]["totals"]} == {"Касса", "Касса (карты)", "Расчётный счёт"}
 code, body, _ = req("/api/home?from=2026-10-15&to=2026-11-13", cookie=owner)
 assert code == 200 and "Выручка" in body.decode()
 code, body, _ = req("/api/home?from=2026-10-15&to=2026-11-13", cookie=market)
@@ -363,16 +406,17 @@ req("/api/logout", {}, cookie=owner)
 assert req("/api/home", cookie=owner)[0] == 401
 # подбор пароля: после 5 неверных - пауза даже для верного
 for _ in range(5):
-    req("/api/login", {"password": "x"})
-assert req("/api/login", {"password": "owner-pass"})[0] == 429
+    req("/api/login", {"login": "Саша", "password": "x"})
+assert req("/api/login", {"login": "Саша", "password": "owner-pass"})[0] == 429
 httpd.shutdown()
 
 # сайт без файла данных: вход работает, meta говорит «данных нет», разделы - 503
-empty = App(Store(tmp / "nope.db"), {"owner": make_lock("owner-pass")}, ROOT / "avtootchet" / "vitrina" / "web")
+empty = App(Store(tmp / "nope.db"), RN.site_users({"owner_lock": make_lock("owner-pass")}),
+            ROOT / "avtootchet" / "vitrina" / "web")
 httpd = serve(empty, "127.0.0.1", 0)
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 base = f"http://127.0.0.1:{httpd.server_address[1]}"
-ck = login("owner-pass")
+ck = login("владелец", "owner-pass")
 code, body, _ = req("/api/meta", cookie=ck)
 assert code == 200 and json.loads(body)["meta"]["nodata"], body
 assert req("/api/home", cookie=ck)[0] == 503

@@ -10,8 +10,10 @@
 <div id="login" class="login" hidden>
   <form id="login-form" class="login-box">
     <div class="brand big">ACMineevo <span>Витрина</span></div>
+    <label for="login-name">Логин</label>
+    <input id="login-name" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
     <label for="password">Пароль</label>
-    <input id="password" type="password" autocomplete="current-password" required autofocus>
+    <input id="password" type="password" autocomplete="current-password" required>
     <button type="submit" class="primary">Войти</button>
     <div id="login-error" class="error" role="alert"></div>
   </form>
@@ -32,6 +34,7 @@
     </nav>
     <div class="top-right">
       <span id="fresh" class="muted"></span>
+      <span id="who" class="muted"></span>
       <button id="logout" class="link">Выйти</button>
     </div>
   </header>

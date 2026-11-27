@@ -21,9 +21,14 @@ DEFAULTS = {
     "app_lock": {},
     "data": {"file": "", "months": 6, "in_codes": "0", "out_codes": "1"},
     # lines: «21=Городская; 45=Авито» - кусок номера линии = название на сайте
+    # users: [{"login": "Саша", "role": "owner"|"marketer", "lock": {...}}]; owner_lock/marketer_lock - от
+    # версий до 0.12 (вход только по паролю), читаются как логины «владелец» и «маркетолог»
     "site": {"host": "0.0.0.0", "port": 8765, "lines": "", "full_phones": False,
-             "owner_lock": {}, "marketer_lock": {}},
+             "users": [], "owner_lock": {}, "marketer_lock": {},
+             # слова в типе/статусе/виде ЗН для отдельных строк в «Финансах» (через запятую)
+             "special": {"warranty": "гарант", "personal": "личн"}},
 }
+LEGACY_LOGINS = {"owner": "владелец", "marketer": "маркетолог"}
 
 
 def settings():
@@ -71,18 +76,39 @@ def do_collect(s, journal: Journal, light: bool = False) -> dict:
     return meta
 
 
-DEMO_PASSWORDS = {"owner": "demo", "marketer": "marketing"}
+DEMO_USERS = [("владелец", "owner", "demo"), ("маркетолог", "marketer", "marketing")]
+
+
+def site_users(site: dict) -> dict:
+    """Пользователи сайта: логин (без регистра) -> {login, role, lock}. Старые пароли ролей (до 0.12)
+    становятся логинами «владелец» и «маркетолог», пока для роли не заведён ни один пользователь."""
+    from .server import norm_login  # noqa: PLC0415
+    out = {}
+    for u in site.get("users") or []:
+        if u.get("login") and (u.get("lock") or {}).get("hash") and u.get("role") in LEGACY_LOGINS:
+            out[norm_login(u["login"])] = {"login": u["login"], "role": u["role"], "lock": u["lock"]}
+    roles = {u["role"] for u in out.values()}
+    for role, login in LEGACY_LOGINS.items():
+        lock = site.get(f"{role}_lock") or {}
+        if role not in roles and lock.get("hash") and norm_login(login) not in out:
+            out[norm_login(login)] = {"login": login, "role": role, "lock": lock}
+    return out
 
 
 def make_app(s, path: Path | None = None, demo: bool = False):
     from .server import App, Store, make_lock  # noqa: PLC0415
     site = s["site"]
     store = Store(path or data_file(s), parse_lines(site.get("lines", "")), bool(site.get("full_phones")))
-    if demo:   # данные выдуманные - пароли простые и известные
-        locks = {k: make_lock(v) for k, v in DEMO_PASSWORDS.items()}
+    if demo:   # данные выдуманные - логины и пароли простые и известные
+        users = site_users({"users": [{"login": l, "role": r, "lock": make_lock(p)} for l, r, p in DEMO_USERS]})
     else:
-        locks = {"owner": site.get("owner_lock") or {}, "marketer": site.get("marketer_lock") or {}}
-    return App(store, locks, web_dir())
+        users = site_users(site)
+    return App(store, users, web_dir(), special=special_rules(site))
+
+
+def special_rules(site: dict) -> dict:
+    sp = {**DEFAULTS["site"]["special"], **(site.get("special") or {})}
+    return {k: [w.strip().lower() for w in str(v or "").replace(";", ",").split(",") if w.strip()] for k, v in sp.items()}
 
 
 def do_serve(s, journal: Journal, path: Path | None = None, port: int | None = None, demo: bool = False) -> None:

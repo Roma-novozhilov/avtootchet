@@ -26,7 +26,7 @@ OPEN_ORDER_DAYS = 45          # ЗН моложе этого и не выдан 
 STUCK_DAYS = 14
 TALK_MIN_SEC = 30
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-MONEY_KEYS = {"amount", "works", "parts", "materials", "paid", "debt", "revenue", "avg_check", "sum"}
+MONEY_KEYS = {"amount", "works", "parts", "materials", "paid", "debt", "revenue", "avg_check", "sum", "balances"}
 
 
 def _t(s) -> datetime | None:
@@ -88,6 +88,7 @@ class Data:
     card_phones: dict = field(default_factory=dict)        # код -> [телефоны]
     order_paid: dict = field(default_factory=dict)         # № ЗН -> оплачено всеми способами
     call_fields: list = field(default_factory=list)        # поля «Истории звонков» и их заполненность
+    balances: list = field(default_factory=list)           # остатки касс и счетов на момент сбора
     meta: dict = field(default_factory=dict)
     lines: dict = field(default_factory=dict)       # кусок номера линии -> название («21» -> «Авито»)
     full_phones: bool = False
@@ -110,6 +111,7 @@ class Data:
             o["_issued"] = _t(o["issued"])
             o["_plan"] = _t(o.get("plan"))
             o["_in_work"] = _t(o.get("in_work"))
+            o["_closed"] = o["_issued"] or _t(o.get("done"))     # выдан, а «закрытые на затраты» - завершён
             if o["_t"]:
                 (d.deleted if o.get("deleted") in ("да", 1, True, "1") else d.orders).append(o)
         d.orders.sort(key=lambda o: o["_t"])
@@ -149,6 +151,7 @@ class Data:
             if t["_t"]:
                 d.tasks.append(t)
         d.call_fields = [dict(r) for r in tables.get("call_fields", [])]
+        d.balances = [dict(b) for b in tables.get("balances", [])]
         d._index()
         return d
 
@@ -528,7 +531,52 @@ def managers(d: Data, f: Filters, role: str) -> dict:
     return {"managers": out, "masters": mrows, "phone_users": users_with_calls}
 
 
-def finance(d: Data, f: Filters) -> dict:
+SPECIAL = (("warranty", "Гарантийные ремонты"), ("personal", "Ремонт личных автомобилей"))
+
+
+def special_of(o: dict, rules: dict) -> str:
+    """Ключ отдельной строки «Финансов» по словам в типе, виде и статусе ЗН ("" - обычный ЗН)."""
+    text = " ".join(str(o.get(k) or "") for k in ("type", "kind", "status")).lower()
+    return next((key for key, _ in SPECIAL if any(w in text for w in rules.get(key) or [])), "")
+
+
+def special_orders(d: Data, f: Filters, rules: dict) -> dict:
+    """Гарантийные ремонты и ремонт личных автомобилей: ЗН, закрытые за период (выдан, а без выдачи -
+    завершён), их суммы и оплаты; плюс сколько таких ЗН сейчас открыто."""
+    rows = []
+    for key, title in SPECIAL:
+        closed = [o for o in d.orders if o.get("_closed") and f.has(o["_closed"]) and special_of(o, rules) == key]
+        open_now = [o for o in d.orders if not o.get("_closed") and special_of(o, rules) == key
+                    and not is_cancelled(o)]
+        rows.append({"key": key, "name": title, "words": ", ".join(rules.get(key) or []) or "не заданы",
+                     "orders": len(closed), "open": len(open_now),
+                     "works": round(sum(float(o.get("works") or 0) for o in closed), 2),
+                     "parts": round(sum(float(o.get("parts") or 0) for o in closed), 2),
+                     "materials": round(sum(float(o.get("materials") or 0) for o in closed), 2),
+                     "amount": round(sum(float(o.get("amount") or 0) for o in closed), 2),
+                     "paid": round(sum(d.paid_by_order.get(o["number"], 0.0) for o in closed), 2)})
+    kinds: dict[tuple, dict] = {}
+    for o in d.orders_in(Filters(f.d1, f.d2)):
+        k = (o.get("type") or "", o.get("kind") or "", o.get("status") or "")
+        r = kinds.setdefault(k, {"type": k[0] or "—", "kind": k[1] or "—", "status": k[2] or "—",
+                                 "orders": 0, "amount": 0.0, "special": dict(SPECIAL).get(special_of(o, rules), "")})
+        r["orders"] += 1
+        r["amount"] += float(o.get("amount") or 0)
+    table = sorted(({**r, "amount": round(r["amount"], 2)} for r in kinds.values()), key=lambda r: -r["orders"])
+    return {"rows": rows, "kinds": table}
+
+
+def balances(d: Data) -> dict:
+    by_kind: dict[str, float] = defaultdict(float)
+    for b in d.balances:
+        by_kind[b.get("kind") or ""] += float(b.get("amount") or 0)
+    return {"at": d.meta.get("balances_at") or "", "rows": d.balances,
+            "totals": [{"kind": k or "—", "amount": round(v, 2)} for k, v in by_kind.items()],
+            "total": round(sum(by_kind.values()), 2),
+            "error": (d.meta.get("errors") or {}).get("Остатки касс и счетов", "")}
+
+
+def finance(d: Data, f: Filters, rules: dict | None = None) -> dict:
     pays = d.payments_in(f)
     by_method, by_dir = Counter(), Counter()
     for p in pays:
@@ -580,6 +628,8 @@ def finance(d: Data, f: Filters) -> dict:
         "daily": _series(f, pays, key=lambda x: float(x["amount"])),
         "unpaid_count": len(unpaid), "unpaid_sum": round(sum(r["debt"] for r in unpaid), 2),
         "source_filled_pct": pct(sum(1 for o in d.orders_in(f) if (o.get("source") or "").strip()), len(d.orders_in(f))),
+        "special": special_orders(d, f, rules or {}),
+        "balances": balances(d),
     }
 
 
