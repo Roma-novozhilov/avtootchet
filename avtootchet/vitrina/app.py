@@ -1,5 +1,5 @@
 """ACMineevo — Витрина: окно настроек. Сама витрина - сайт (server.py); окно нужно, чтобы
-задать подключение к Далиону, пароли сайта и названия линий, собрать данные вручную и
+задать подключение к Далиону, пользователей сайта (логин + пароль) и названия линий, собрать данные вручную и
 проверить сайт. На сервере работают задачи Windows (tools/setup_vitrina.ps1):
 сбор в 6:00 (--collect) и сайт при включении компьютера (--serve). Кнопка «Перезапустить сайт»
 останавливает все копии сайта и запускает его заново из текущего файла программы (restart.py).
@@ -12,9 +12,9 @@ import threading
 import webbrowser
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout, QLabel,
-                               QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QGroupBox, QHBoxLayout,
+                               QInputDialog, QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox, QPlainTextEdit,
+                               QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import __version__
 from ..common import app_lock, updater
@@ -23,7 +23,7 @@ from ..common.ui import STYLE, form_layout, run_in_background, show_start
 from ..common.update_ui import UpdateController
 from . import restart, runner
 from .db import read_db
-from .server import make_lock, serve
+from .server import make_lock, norm_login, serve
 
 TITLE = "ACMineevo — Витрина"
 MIN_SITE_PASSWORD = 8
@@ -72,6 +72,85 @@ class SitePasswordDialog(QDialog):
             return
         self.lock = make_lock(self.a.text()) if self.a.text() else {}
         self.accept()
+
+
+ROLE_TITLES = {"owner": "владелец (всё)", "marketer": "маркетолог (без денег)"}
+
+
+class UsersDialog(QDialog):
+    """Пользователи сайта: логин + роль + пароль. Старые пароли ролей (до 0.12) показываются как
+    пользователи «владелец»/«маркетолог» и при сохранении переносятся в общий список."""
+
+    def __init__(self, site: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Пользователи сайта витрины")
+        self.resize(460, 360)
+        self.users = [dict(u) for u in runner.site_users(site).values()]
+        lay = QVBoxLayout(self)
+        hint = QLabel("Вход на сайт — по логину и паролю. Владелец видит всё, маркетолог — без денег. "
+                      "Логин без учёта регистра. Пароли хранятся только в виде отпечатков.")
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        self.list = QListWidget()
+        lay.addWidget(self.list)
+        row = QHBoxLayout()
+        for text, fn in (("Добавить…", self._add), ("Сменить пароль…", self._password), ("Удалить", self._delete)):
+            b = QPushButton(text)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch()
+        lay.addLayout(row)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self._fill()
+
+    def _fill(self):
+        self.list.clear()
+        for u in sorted(self.users, key=lambda u: (u["role"] != "owner", u["login"].lower())):
+            self.list.addItem(f"{u['login']}  —  {ROLE_TITLES.get(u['role'], u['role'])}")
+
+    def _current(self) -> dict | None:
+        i = self.list.currentRow()
+        if i < 0:
+            return None
+        ordered = sorted(self.users, key=lambda u: (u["role"] != "owner", u["login"].lower()))
+        return ordered[i]
+
+    def _add(self):
+        login, ok = QInputDialog.getText(self, TITLE, "Логин (например: Саша):")
+        login = " ".join(login.split())
+        if not ok or not login:
+            return
+        if any(norm_login(u["login"]) == norm_login(login) for u in self.users):
+            QMessageBox.warning(self, TITLE, "Такой логин уже есть.")
+            return
+        names = list(ROLE_TITLES.values())
+        role_title, ok = QInputDialog.getItem(self, TITLE, "Роль:", names, 0, False)
+        if not ok:
+            return
+        dlg = SitePasswordDialog(login, self)
+        if dlg.exec() != QDialog.Accepted or not (dlg.lock or {}).get("hash"):
+            return
+        role = next(k for k, v in ROLE_TITLES.items() if v == role_title)
+        self.users.append({"login": login, "role": role, "lock": dlg.lock})
+        self._fill()
+
+    def _password(self):
+        u = self._current()
+        if not u:
+            return
+        dlg = SitePasswordDialog(u["login"], self)
+        if dlg.exec() == QDialog.Accepted and (dlg.lock or {}).get("hash"):
+            u["lock"] = dlg.lock
+
+    def _delete(self):
+        u = self._current()
+        if u and QMessageBox.question(self, TITLE, f"Удалить пользователя «{u['login']}»?") == QMessageBox.Yes:
+            self.users.remove(u)
+            self._fill()
 
 
 class VitrinaWindow(QMainWindow):
@@ -144,17 +223,22 @@ class VitrinaWindow(QMainWindow):
         self.full = QCheckBox("показывать номера телефонов полностью (иначе — последние 4 цифры)")
         self.full.setChecked(bool(s.get("full_phones")))
         pw = QHBoxLayout()
-        self.btn_owner = QPushButton()
-        self.btn_owner.clicked.connect(lambda: self._site_password("owner_lock", "владелец (всё)"))
-        self.btn_mark = QPushButton()
-        self.btn_mark.clicked.connect(lambda: self._site_password("marketer_lock", "маркетолог (без денег)"))
-        pw.addWidget(self.btn_owner)
-        pw.addWidget(self.btn_mark)
+        self.btn_users = QPushButton()
+        self.btn_users.clicked.connect(self._edit_users)
+        pw.addWidget(self.btn_users)
         pw.addStretch()
+        special = {**runner.DEFAULTS["site"]["special"], **(s.get("special") or {})}
+        self.warranty = QLineEdit(special.get("warranty") or "")
+        self.personal = QLineEdit(special.get("personal") or "")
+        for w in (self.warranty, self.personal):
+            w.setPlaceholderText("слова через запятую")
+            w.setToolTip("ЗН попадает в строку «Финансов», если в его типе, виде или статусе есть одно из слов")
         f.addRow("Порт:", self.port)
         f.addRow("Названия линий:", self.lines)
         f.addRow("", self.full)
-        f.addRow("Пароли входа:", pw)
+        f.addRow("Вход на сайт:", pw)
+        f.addRow("Гарантия (слова):", self.warranty)
+        f.addRow("Личные авто (слова):", self.personal)
         self._password_labels()
         lay.addWidget(g)
 
@@ -167,7 +251,8 @@ class VitrinaWindow(QMainWindow):
         self.btn_site = QPushButton("Запустить сайт здесь")
         self.btn_site.clicked.connect(self._toggle_site)
         self.btn_demo = QPushButton("Демо-сайт")
-        self.btn_demo.setToolTip("Сайт на выдуманных данных: пароль demo (владелец) или marketing (маркетолог)")
+        self.btn_demo.setToolTip("Сайт на выдуманных данных: логин «владелец», пароль demo; "
+                                 "логин «маркетолог», пароль marketing")
         self.btn_demo.clicked.connect(self._demo)
         self.btn_restart = QPushButton("⟳  Перезапустить сайт")
         self.btn_restart.setToolTip("Остановить все запущенные копии сайта (задача Windows, старые процессы) "
@@ -192,17 +277,19 @@ class VitrinaWindow(QMainWindow):
 
     # ------------------------------------------------------------ настройки
     def _password_labels(self):
-        s = self.settings["site"]
-        on = lambda k: bool((s.get(k) or {}).get("hash"))  # noqa: E731
-        self.btn_owner.setText(("✓ " if on("owner_lock") else "") + "Пароль владельца…")
-        self.btn_mark.setText(("✓ " if on("marketer_lock") else "") + "Пароль маркетолога…")
+        n = len(runner.site_users(self.settings["site"]))
+        self.btn_users.setText(f"Пользователи сайта ({n})…" if n else "Пользователи сайта — не заданы…")
 
-    def _site_password(self, key: str, who: str):
-        dlg = SitePasswordDialog(who, self)
-        if dlg.exec() == QDialog.Accepted and dlg.lock is not None:
-            self.settings["site"][key] = dlg.lock
+    def _edit_users(self):
+        dlg = UsersDialog(self.settings["site"], self)
+        if dlg.exec() == QDialog.Accepted:
+            site = self.settings["site"]
+            site["users"] = dlg.users
+            site["owner_lock"], site["marketer_lock"] = {}, {}   # старые пароли ролей уже в списке
             self.settings.save()
             self._password_labels()
+            QMessageBox.information(self, TITLE, "Пользователи сохранены. Сайт, запущенный задачей Windows, "
+                                                 "применит их после «Перезапустить сайт».")
 
     def _save(self, quiet: bool = False):
         self.settings["com"] = {"server": self.server.text().strip(), "base": "", "user": self.user.text().strip(),
@@ -211,7 +298,8 @@ class VitrinaWindow(QMainWindow):
                                  "in_codes": self.in_codes.text().strip(), "out_codes": self.out_codes.text().strip()}
         site = self.settings["site"]
         site.update({"port": self.port.value(), "lines": self.lines.toPlainText().strip(),
-                     "full_phones": self.full.isChecked()})
+                     "full_phones": self.full.isChecked(),
+                     "special": {"warranty": self.warranty.text().strip(), "personal": self.personal.text().strip()}})
         self.settings.save()
         if not quiet:
             QMessageBox.information(self, TITLE, "Настройки сохранены. Сайт, запущенный задачей Windows, "

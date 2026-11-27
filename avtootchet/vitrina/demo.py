@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import random
+import zlib
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -121,6 +122,7 @@ def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tu
                     continue
             orders.append({"plan": plan, "refusal": "", "manager": rnd.choice(USERS + [""]), "deleted": "","number": num, "date": _iso(t), "created": _iso(t), "author": rnd.choice(USERS + ["Мастер Орлов"]),
                            "type": rnd.choice(["СЕРВИС", "СЕРВИС", "МЕТАЛЛООБРАБОТКА"]), "status": status,
+                           "kind": _demo_kind(num),
                            "source": rnd.choice(SOURCES) if rnd.random() < 0.12 else "",
                            "client_code": cl["code"], "client": cl["name"], "car": rnd.choice(["Lada Vesta", "Kia Rio", "Hyundai Solaris", "Renault Logan", "Toyota Camry"]),
                            "master": rnd.choice(MASTERS),
@@ -182,11 +184,23 @@ def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tu
                                           ("Пользователь", "Пользователь", "ссылка: Пользователи", 0.98),
                                           ("ПутьКФайлу", "Путь к файлу", "Строка", 0.0),
                                           ("Комментарий", "Комментарий", "Строка", 0.03))]
+    balances = [{"account": a, "kind": k, "org": o, "currency": "руб.", "amount": v} for a, k, o, v in (
+        ("Касса сервиса", "Касса", "ИП Демо", 48_250.0), ("Касса магазина", "Касса", "ИП Демо", 12_900.0),
+        ("Терминал (карты)", "Касса (карты)", "ИП Демо", 31_400.0),
+        ("Р/с в банке", "Расчётный счёт", "", 612_780.55))]
     tables = {"calls": calls, "orders": orders, "payments": payments, "works": works, "tasks": tasks,
-              "visits": visits, "clients": cards, "phones": phones, "call_fields": call_fields}
+              "visits": visits, "clients": cards, "phones": phones, "call_fields": call_fields,
+              "balances": balances}
     meta = {"collected_at": _iso(now), "from": start.strftime("%Y-%m-%d"), "to": now.strftime("%Y-%m-%d"),
-            "errors": {}, "demo": True, "counts": {k: len(v) for k, v in tables.items()}}
+            "errors": {}, "demo": True, "counts": {k: len(v) for k, v in tables.items()},
+            "balances_at": _iso(now)[:16]}
     return tables, meta
+
+
+def _demo_kind(num: str) -> str:
+    """Вид ЗН в демо: без случайных чисел, чтобы не менять остальные выдуманные данные."""
+    h = zlib.crc32(num.encode()) % 100
+    return "Гарантия" if h < 5 else "Личный автомобиль" if h < 8 else ""
 
 
 def write_demo(path: Path, now: datetime | None = None) -> dict:

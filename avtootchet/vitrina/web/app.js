@@ -28,13 +28,13 @@ async function api(path, params = {}) {
   return data;
 }
 
-function showLogin() { $("#app").hidden = true; $("#login").hidden = false; $("#password").focus(); }
+function showLogin() { $("#app").hidden = true; $("#login").hidden = false; ($("#login-name").value ? $("#password") : $("#login-name")).focus(); }
 
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   $("#login-error").textContent = "";
   const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: $("#password").value }), credentials: "same-origin" });
+    body: JSON.stringify({ login: $("#login-name").value, password: $("#password").value }), credentials: "same-origin" });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) { $("#login-error").textContent = data.error || "Не удалось войти"; return; }
   $("#password").value = "";
@@ -343,8 +343,25 @@ async function renderFinance(v) {
       <div class="card"><h3>Работы, которые приносят больше всего</h3><p class="sub">Сумма работ в проведённых ЗН за период, топ-20</p>${bars(f.top_works.map((w) => ({ label: w.work, value: w.amount, extra: `${w.orders} ЗН` })), { money: true })}</div>
       <div class="card"><h3>Источники рекламы</h3><p class="sub">Сумма — по выданным за период ЗН. «Не указан» — источник в ЗН не заполнили</p>${table([{ key: "source", title: "Источник" }, { key: "orders", title: "Новых ЗН", num: true }, { key: "issued", title: "Выдано", num: true }, { key: "amount", title: "Сумма", num: true, fmt: money }], f.sources)}</div>
     </div>
-    <div class="card"><h3>По месяцам</h3><p class="sub">Все месяцы, что есть в данных витрины (без фильтра периода)</p>${table([{ key: "month", title: "Месяц", fmt: (m) => mlabel(m) }, { key: "revenue", title: "Выручка", num: true, fmt: money }, { key: "issued", title: "Выдано ЗН", num: true }, { key: "avg_check", title: "Средний чек", num: true, fmt: money }], f.months)}</div>`;
+    <div class="card"><h3>По месяцам</h3><p class="sub">Все месяцы, что есть в данных витрины (без фильтра периода)</p>${table([{ key: "month", title: "Месяц", fmt: (m) => mlabel(m) }, { key: "revenue", title: "Выручка", num: true, fmt: money }, { key: "issued", title: "Выдано ЗН", num: true }, { key: "avg_check", title: "Средний чек", num: true, fmt: money }], f.months)}</div>
+    ${specialCard(f.special)}
+    ${balancesCard(f.balances)}`;
   bindLists(v);
+}
+function specialCard(sp) {
+  if (!sp) return "";
+  const cols = [{ key: "name", title: "" }, { key: "orders", title: "Закрыто ЗН", num: true }, { key: "works", title: "Работы", num: true, fmt: money }, { key: "parts", title: "Запчасти", num: true, fmt: money }, { key: "materials", title: "Материалы", num: true, fmt: money }, { key: "amount", title: "Сумма ЗН", num: true, fmt: money }, { key: "paid", title: "Оплачено", num: true, fmt: money }, { key: "open", title: "Сейчас открыто", num: true }];
+  const words = sp.rows.map((r) => `${esc(r.name)} — слова «${esc(r.words)}»`).join("; ");
+  return `<div class="card"><h3>Гарантийные ремонты и ремонт личных автомобилей</h3><p class="sub">Заказ-наряды, закрытые за период (выдан, а без выдачи — завершён, как «Закрыт на затраты»). ЗН попадает в строку, если в его типе, виде или статусе есть слово: ${words}. Слова меняются в окне программы витрины.</p>${table(cols, sp.rows)}
+    <details><summary>Все сочетания тип / вид / статус ЗН за период — проверить, что строки выше считаются верно</summary>${table([{ key: "type", title: "Тип" }, { key: "kind", title: "Вид" }, { key: "status", title: "Статус" }, { key: "orders", title: "ЗН", num: true }, { key: "amount", title: "Сумма", num: true, fmt: money }, { key: "special", title: "Попадает в" }], sp.kinds)}</details></div>`;
+}
+function balancesCard(b) {
+  if (!b) return "";
+  const at = b.at ? `на ${b.at.slice(8, 10)}.${b.at.slice(5, 7)} ${b.at.slice(11, 16)}` : "";
+  if (b.error) return `<div class="card"><h3>Остатки по кассам и счетам</h3><p class="error">Не загрузились: ${esc(b.error).slice(0, 200)}</p></div>`;
+  return `<div class="card"><h3>Остатки по кассам и счетам ${esc(at)}</h3><p class="sub">По данным Далиона на момент последнего сбора (утром и днём в 10, 13, 16, 19). Расчётные счета — то, что заведено в Далион; реальный остаток в банке может отличаться. Видит только владелец.</p>
+    <div class="kpis">${kpiCard({ title: "Всего", value: b.total, money: true })}${b.totals.map((t) => kpiCard({ title: t.kind, value: t.amount, money: true })).join("")}</div>
+    ${table([{ key: "account", title: "Касса / счёт" }, { key: "kind", title: "Вид" }, { key: "org", title: "Организация" }, { key: "amount", title: "Остаток", num: true, fmt: money }], b.rows)}</div>`;
 }
 // ------------------------------------------------------------------ воронка, клиенты, база
 const pctText = (x) => (x === null || x === undefined ? "—" : `${num(x)} %`);
@@ -449,6 +466,7 @@ async function start() {
   try {
     const m = await api("/api/meta");
     state.role = m.role; state.meta = m.meta;
+    $("#who").textContent = m.user ? `· ${m.user}` : "";
     $("#login").hidden = true; $("#app").hidden = false;
     document.querySelectorAll("[data-owner]").forEach((b) => (b.hidden = m.role !== "owner"));
     fillSelect($("#user"), m.options.users); fillSelect($("#line"), m.options.lines);

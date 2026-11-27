@@ -20,6 +20,7 @@ from ..marketing.export import (CALL_COLS, CALLBACK_HOURS, Q_CALLS, Q_TASKS, TAS
 from ..owner.revenue import classify_cashbox
 from ..common.comdate import inline_dates
 from .callfields import collect_call_fields
+from ..owner.stock_probe import _call, _items, _prop
 from .db import read_db, write_db
 
 Q_ORDERS = """ВЫБРАТЬ
@@ -93,6 +94,69 @@ Q_ORDER_EXTRA = """ВЫБРАТЬ
 	З.Дата МЕЖДУ &Начало И &Конец"""
 EXTRA_COLS = ("Номер", "Дата", "Удален", "План", "Отказ", "Менеджер", "Создан", "Автор", "Тип", "Статус",
               "Источник", "КлиентКод", "Клиент", "Автомобиль", "Мастер")
+
+# «Вид» заказ-наряда (поле рядом с «Тип» в шапке ЗН): его имя в метаданных Далиона не известно заранее,
+# поэтому ищется по синониму «Вид» среди реквизитов документа. Нужен для отдельных строк в «Финансах»
+# (гарантия, личные автомобили) - вместе с типом и статусом.
+Q_ORDER_KIND = """ВЫБРАТЬ
+	З.Номер КАК Номер,
+	ПРЕДСТАВЛЕНИЕ(З.{attr}) КАК Вид
+ИЗ
+	Документ.ЗаказНаряд КАК З
+ГДЕ
+	НЕ З.ПометкаУдаления
+	И З.Дата МЕЖДУ &Начало И &Конец"""
+KIND_COLS = ("Номер", "Вид")
+
+# Остатки по кассам и расчётным счетам на момент сбора (регистр ДенежныеСредства). Только для владельца.
+Q_BALANCES = """ВЫБРАТЬ
+	ПРЕДСТАВЛЕНИЕ(О.СчетДенежныхСредств) КАК Счет,
+	ВЫБОР КОГДА О.СчетДенежныхСредств ССЫЛКА Справочник.Кассы ТОГДА "Касса" ИНАЧЕ "Расчётный счёт" КОНЕЦ КАК Вид,
+	ЕСТЬNULL(ВЫРАЗИТЬ(О.СчетДенежныхСредств КАК Справочник.Кассы).Организация.Наименование, "") КАК Организация,
+	ЕСТЬNULL(ВЫРАЗИТЬ(О.СчетДенежныхСредств КАК Справочник.Кассы).ДляОплатПоКартам, ЛОЖЬ) КАК Карты,
+	ПРЕДСТАВЛЕНИЕ(О.Валюта) КАК Валюта,
+	О.СуммаОстаток КАК Остаток
+ИЗ
+	РегистрНакопления.ДенежныеСредства.Остатки(&Конец) КАК О"""
+BAL_COLS = ("Счет", "Вид", "Организация", "Карты", "Валюта", "Остаток")
+
+
+def order_kind_attr(conn) -> str:
+    """Имя реквизита «Вид» у документа ЗаказНаряд (по синониму), или "" если такого нет."""
+    try:
+        md = _prop(conn, "Metadata", "Метаданные")
+        doc = _call(_prop(md, "Documents", "Документы"), "Find", "Найти", args=("ЗаказНаряд",))
+    except AttributeError:
+        return ""
+    if doc is None:
+        return ""
+    found = ""
+    for a in _items(_prop(doc, "Attributes", "Реквизиты")):
+        name = str(_prop(a, "Name", "Имя"))
+        try:
+            syn = str(_prop(a, "Synonym", "Синоним")).strip().lower()
+        except AttributeError:
+            syn = ""
+        if syn == "вид":
+            return name
+        if not found and re.fullmatch(r"Вид(ЗН|ЗаказНаряда|ЗаказаНаряда|Ремонта|Работ)", name, re.I):
+            found = name
+    return found
+
+
+def balances_table(rows: list[dict]) -> list[dict]:
+    out = []
+    for r in rows:
+        amount = _num(r["Остаток"])
+        if abs(amount) < 0.005:
+            continue
+        kind = _s(r["Вид"])
+        if kind == "Касса" and r["Карты"]:
+            kind = "Касса (карты)"
+        out.append({"account": _s(r["Счет"]), "kind": kind, "org": _s(r["Организация"]),
+                    "currency": _s(r["Валюта"]), "amount": round(amount, 2)})
+    return sorted(out, key=lambda b: (b["kind"] != "Касса", b["kind"], b["org"], b["account"]))
+
 
 # История визитов за всё время: клиент + день + тип ЗН. Визит - завершённый или выданный ЗН
 # («Закрыт на затраты», предварительные и удалённые не считаются; внутренние убираются в Python).
@@ -397,6 +461,15 @@ def collect(conn, months: int, dirs: Directions, now: datetime | None = None,
     def orders():
         rows = orders_table(run(Q_ORDERS, ORDER_COLS, since("orders")))
         try:
+            attr = order_kind_attr(conn)
+            if attr:
+                kinds = {_s(r["Номер"]): _s(r["Вид"]) for r in run(Q_ORDER_KIND.format(attr=attr), KIND_COLS,
+                                                                    since("orders"))}
+                for o in rows:
+                    o["kind"] = kinds.get(o["number"], "")
+        except Exception as e:  # noqa: BLE001 - без вида ЗН всё остальное работает
+            errors["Вид заказ-наряда"] = str(e)
+        try:
             return order_extras(rows, run(Q_ORDER_EXTRA, EXTRA_COLS, since("orders")))
         except Exception as e:  # noqa: BLE001 - без записей/отказов ЗН всё равно нужны
             errors["Записи и отказы"] = str(e)
@@ -409,6 +482,7 @@ def collect(conn, months: int, dirs: Directions, now: datetime | None = None,
         ("tasks", "Задачи", lambda: tasks_table(run(Q_TASKS, TASK_COLS, since("tasks")), now)),
         ("clients", "Карточки клиентов", lambda: clients_table(run(Q_CLIENTS_NEW if light else Q_CLIENTS,
                                                                    CLIENT_COLS, since("clients")))),
+        ("balances", "Остатки касс и счетов", lambda: balances_table(run(Q_BALANCES, BAL_COLS, end))),
     ]
     if not light:
         sections += [
@@ -427,6 +501,8 @@ def collect(conn, months: int, dirs: Directions, now: datetime | None = None,
     meta = {"collected_at": now.strftime("%Y-%m-%d %H:%M:%S"), "from": full_start.strftime("%Y-%m-%d"),
             "to": end.strftime("%Y-%m-%d"), "errors": errors, "demo": False,
             "counts": {k: len(v) for k, v in tables.items()}}
+    if "Остатки касс и счетов" not in errors:
+        meta["balances_at"] = now.strftime("%Y-%m-%d %H:%M")
     if light:
         meta["cutoffs"] = {k: since(k).strftime("%Y-%m-%d %H:%M:%S") for k in LIGHT_DAYS}
     return tables, meta
@@ -448,10 +524,14 @@ def merge_light(old: dict, old_meta: dict, new: dict, new_meta: dict) -> tuple[d
             continue
         dk = DATE_KEY[key]
         tables[key] = [r for r in tables.get(key, []) if (r.get(dk) or "") < cutoff] + new[key]
+    if "balances" in new and "Остатки касс и счетов" not in failed:   # остатки - всегда на момент сбора
+        tables["balances"] = new["balances"]
     meta = dict(old_meta)
     meta["updated_at"] = new_meta["collected_at"]
     meta["to"] = new_meta["to"]
-    refreshed = set(titles.values()) | {"Записи и отказы"}
+    if new_meta.get("balances_at"):
+        meta["balances_at"] = new_meta["balances_at"]
+    refreshed = set(titles.values()) | {"Записи и отказы", "Остатки касс и счетов", "Вид заказ-наряда"}
     # ошибки утренних разделов, которые днём не перечитываются, остаются; остальные - по свежему разу
     meta["errors"] = {**{k: v for k, v in old_meta.get("errors", {}).items() if k not in refreshed},
                       **new_meta.get("errors", {})}
