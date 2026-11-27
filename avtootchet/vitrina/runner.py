@@ -95,6 +95,11 @@ def site_users(site: dict) -> dict:
     return out
 
 
+def has_owner(site: dict) -> bool:
+    """Есть ли хоть один вход владельца - иначе сайт не запускается."""
+    return any(u["role"] == "owner" for u in site_users(site).values())
+
+
 def make_app(s, path: Path | None = None, demo: bool = False):
     from .server import App, Store, make_lock  # noqa: PLC0415
     site = s["site"]
@@ -143,8 +148,8 @@ def main(argv: list[str]) -> int:
         do_serve(s, journal, path, demo=True)
         return 0
     if "--serve" in argv:
-        if not (s["site"].get("owner_lock") or {}).get("hash"):
-            journal.write("Сайт витрины не запущен", "не задан пароль владельца")
+        if not has_owner(s["site"]):
+            journal.write("Сайт витрины не запущен", "не заведён ни один пользователь-владелец")
             return 2
         do_serve(s, journal)
         return 0

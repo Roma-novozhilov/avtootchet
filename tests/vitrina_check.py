@@ -335,6 +335,10 @@ USERS = RN.site_users({"users": [{"login": "Саша", "role": "owner", "lock": 
                                  {"login": "Без роли", "role": "admin", "lock": make_lock("x-pass-123")}],
                        "owner_lock": make_lock("old-owner"), "marketer_lock": make_lock("market-pass")})
 assert set(USERS) == {"саша", "маркетолог"}, USERS          # старый пароль владельца не нужен - есть «Саша»
+# сайт запускается, если есть владелец - хоть новым пользователем (старый пароль уже стёрт), хоть старым паролем
+assert RN.has_owner({"users": [{"login": "Саша", "role": "owner", "lock": make_lock("owner-pass")}], "owner_lock": {}})
+assert RN.has_owner({"owner_lock": make_lock("old-owner")})
+assert not RN.has_owner({"users": [{"login": "Маша", "role": "marketer", "lock": make_lock("m-pass")}], "owner_lock": {}})
 assert RN.special_rules({}) == {"warranty": ["гарант"], "personal": ["личн"]}
 assert RN.special_rules({"special": {"warranty": "Гарантия; ГАР", "personal": ""}})["warranty"] == ["гарантия", "гар"]
 app = App(Store(tmp / "demo.db"), USERS, ROOT / "avtootchet" / "vitrina" / "web", now=lambda: NOW,

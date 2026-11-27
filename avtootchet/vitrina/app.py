@@ -413,8 +413,8 @@ class VitrinaWindow(QMainWindow):
             self._show_status()
             return
         self._save(quiet=True)
-        if not (self.settings["site"].get("owner_lock") or {}).get("hash"):
-            QMessageBox.warning(self, TITLE, "Сначала задайте пароль владельца.")
+        if not runner.has_owner(self.settings["site"]):
+            QMessageBox.warning(self, TITLE, "Сначала заведите пользователя-владельца: «Пользователи сайта…».")
             return
         if not runner.data_file(self.settings).exists():
             QMessageBox.information(self, TITLE, "Данных витрины ещё нет: сайт откроется, но покажет пустую "
@@ -423,8 +423,8 @@ class VitrinaWindow(QMainWindow):
 
     def _demo(self):
         self._start(demo=True)
-        QMessageBox.information(self, TITLE, "Демо-сайт открыт в браузере.\n\nПароль владельца: demo\n"
-                                             "Пароль маркетолога: marketing")
+        QMessageBox.information(self, TITLE, "Демо-сайт открыт в браузере.\n\nЛогин «владелец», пароль demo\n"
+                                             "Логин «маркетолог», пароль marketing")
 
     def closeEvent(self, e):  # noqa: N802
         if self.httpd:
