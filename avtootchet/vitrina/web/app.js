@@ -351,9 +351,10 @@ async function renderFinance(v) {
 function specialCard(sp) {
   if (!sp) return "";
   const cols = [{ key: "name", title: "" }, { key: "orders", title: "Закрыто ЗН", num: true }, { key: "works", title: "Работы", num: true, fmt: money }, { key: "parts", title: "Запчасти", num: true, fmt: money }, { key: "materials", title: "Материалы", num: true, fmt: money }, { key: "amount", title: "Сумма ЗН", num: true, fmt: money }, { key: "paid", title: "Оплачено", num: true, fmt: money }, { key: "open", title: "Сейчас открыто", num: true }];
-  const words = sp.rows.map((r) => `${esc(r.name)} — слова «${esc(r.words)}»`).join("; ");
-  return `<div class="card"><h3>Гарантийные ремонты и ремонт личных автомобилей</h3><p class="sub">Заказ-наряды, закрытые за период (выдан, а без выдачи — завершён, как «Закрыт на затраты»). ЗН попадает в строку, если в его типе, виде или статусе есть слово: ${words}. Слова меняются в окне программы витрины.</p>${table(cols, sp.rows)}
-    <details><summary>Все сочетания тип / вид / статус ЗН за период — проверить, что строки выше считаются верно</summary>${table([{ key: "type", title: "Тип" }, { key: "kind", title: "Вид" }, { key: "status", title: "Статус" }, { key: "orders", title: "ЗН", num: true }, { key: "amount", title: "Сумма", num: true, fmt: money }, { key: "special", title: "Попадает в" }], sp.kinds)}</details></div>`;
+  const w = sp.rows.find((r) => r.key === "warranty"), p = sp.rows.find((r) => r.key === "personal");
+  const rule = `Гарантия — в договоре ЗН есть «${esc(w ? w.words : "")}». Наши машины — плательщик «${esc(p && p.payer ? p.payer : "не задан")}» без гарантийного договора${p && p.words !== "не заданы" ? ` (или в договоре «${esc(p.words)}»)` : ""}.`;
+  return `<div class="card"><h3>Гарантийные ремонты и наши машины</h3><p class="sub">Заказ-наряды, закрытые за период (выдан, а без выдачи — завершён). «Сумма ЗН» по нашим машинам — во что обошлись свои машины по ценам ЗН. ${rule} Настраивается в окне программы витрины.</p>${p && !p.payer ? '<p class="error">Не задан плательщик для наших машин — впишите его в окне программы витрины («Наши машины - плательщик»). Как он называется — в таблице ниже.</p>' : ""}${table(cols, sp.rows)}
+    <details><summary>Все сочетания тип / вид / плательщик / договор ЗН за период — проверить, что строки выше считаются верно</summary>${table([{ key: "type", title: "Тип" }, { key: "kind", title: "Вид" }, { key: "payer", title: "Плательщик" }, { key: "contract", title: "Договор" }, { key: "orders", title: "ЗН", num: true }, { key: "amount", title: "Сумма", num: true, fmt: money }, { key: "special", title: "Попадает в" }], sp.kinds)}</details></div>`;
 }
 function balancesCard(b) {
   if (!b) return "";

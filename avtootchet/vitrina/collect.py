@@ -95,18 +95,26 @@ Q_ORDER_EXTRA = """ВЫБРАТЬ
 EXTRA_COLS = ("Номер", "Дата", "Удален", "План", "Отказ", "Менеджер", "Создан", "Автор", "Тип", "Статус",
               "Источник", "КлиентКод", "Клиент", "Автомобиль", "Мастер")
 
-# «Вид» заказ-наряда (поле рядом с «Тип» в шапке ЗН): его имя в метаданных Далиона не известно заранее,
-# поэтому ищется по синониму «Вид» среди реквизитов документа. Нужен для отдельных строк в «Финансах»
-# (гарантия, личные автомобили) - вместе с типом и статусом.
-Q_ORDER_KIND = """ВЫБРАТЬ
-	З.Номер КАК Номер,
-	ПРЕДСТАВЛЕНИЕ(З.{attr}) КАК Вид
+# Поля шапки ЗН для отдельных строк «Финансов» (гарантия, наши машины): «Вид», «Плательщик», «Договор».
+# Их имена в метаданных Далиона заранее не известны - ищутся по синониму среди реквизитов документа.
+HEAD_FIELDS = (("kind", "Вид", ("вид",), r"Вид(ЗН|ЗаказНаряда|ЗаказаНаряда|Ремонта|Работ)"),
+               ("payer", "Плательщик", ("плательщик",), r"Плательщик"),
+               ("contract", "Договор", ("договор", "договор контрагента", "договор взаиморасчетов"),
+                r"Договор(Контрагента|Взаиморасчетов)?"))
+
+
+def q_order_head(attrs: dict) -> tuple[str, tuple]:
+    """Запрос: номер ЗН + представления найденных полей шапки."""
+    cols = ["Номер"] + [alias for key, alias, *_ in HEAD_FIELDS if attrs.get(key)]
+    fields = ",\n\t".join(["З.Номер КАК Номер"] + [f"ПРЕДСТАВЛЕНИЕ(З.{attrs[key]}) КАК {alias}"
+                                                     for key, alias, *_ in HEAD_FIELDS if attrs.get(key)])
+    return f"""ВЫБРАТЬ
+\t{fields}
 ИЗ
-	Документ.ЗаказНаряд КАК З
+\tДокумент.ЗаказНаряд КАК З
 ГДЕ
-	НЕ З.ПометкаУдаления
-	И З.Дата МЕЖДУ &Начало И &Конец"""
-KIND_COLS = ("Номер", "Вид")
+\tНЕ З.ПометкаУдаления
+\tИ З.Дата МЕЖДУ &Начало И &Конец""", tuple(cols)
 
 # Остатки по кассам и расчётным счетам на момент сбора (регистр ДенежныеСредства). Только для владельца.
 Q_BALANCES = """ВЫБРАТЬ
@@ -121,27 +129,33 @@ Q_BALANCES = """ВЫБРАТЬ
 BAL_COLS = ("Счет", "Вид", "Организация", "Карты", "Валюта", "Остаток")
 
 
-def order_kind_attr(conn) -> str:
-    """Имя реквизита «Вид» у документа ЗаказНаряд (по синониму), или "" если такого нет."""
+def order_head_attrs(conn) -> dict:
+    """Имена реквизитов «Вид», «Плательщик», «Договор» у документа ЗаказНаряд: {"kind": имя, ...}.
+    Чего нет - того нет в словаре."""
     try:
         md = _prop(conn, "Metadata", "Метаданные")
         doc = _call(_prop(md, "Documents", "Документы"), "Find", "Найти", args=("ЗаказНаряд",))
     except AttributeError:
-        return ""
+        return {}
     if doc is None:
-        return ""
-    found = ""
+        return {}
+    by_syn, by_name = {}, {}
     for a in _items(_prop(doc, "Attributes", "Реквизиты")):
         name = str(_prop(a, "Name", "Имя"))
         try:
             syn = str(_prop(a, "Synonym", "Синоним")).strip().lower()
         except AttributeError:
             syn = ""
-        if syn == "вид":
-            return name
-        if not found and re.fullmatch(r"Вид(ЗН|ЗаказНаряда|ЗаказаНаряда|Ремонта|Работ)", name, re.I):
-            found = name
-    return found
+        for key, _alias, syns, pattern in HEAD_FIELDS:
+            if syn in syns and key not in by_syn:
+                by_syn[key] = name
+            if re.fullmatch(pattern, name, re.I) and key not in by_name:
+                by_name[key] = name
+    return {**by_name, **by_syn}
+
+
+def order_kind_attr(conn) -> str:
+    return order_head_attrs(conn).get("kind", "")
 
 
 def balances_table(rows: list[dict]) -> list[dict]:
@@ -461,14 +475,16 @@ def collect(conn, months: int, dirs: Directions, now: datetime | None = None,
     def orders():
         rows = orders_table(run(Q_ORDERS, ORDER_COLS, since("orders")))
         try:
-            attr = order_kind_attr(conn)
-            if attr:
-                kinds = {_s(r["Номер"]): _s(r["Вид"]) for r in run(Q_ORDER_KIND.format(attr=attr), KIND_COLS,
-                                                                    since("orders"))}
+            attrs = order_head_attrs(conn)
+            if attrs:
+                q, cols = q_order_head(attrs)
+                head = {_s(r["Номер"]): r for r in run(q, cols, since("orders"))}
                 for o in rows:
-                    o["kind"] = kinds.get(o["number"], "")
+                    h = head.get(o["number"]) or {}
+                    for key, alias, *_ in HEAD_FIELDS:
+                        o[key] = _s(h.get(alias)) if attrs.get(key) else ""
         except Exception as e:  # noqa: BLE001 - без вида ЗН всё остальное работает
-            errors["Вид заказ-наряда"] = str(e)
+            errors["Вид, плательщик, договор ЗН"] = str(e)
         try:
             return order_extras(rows, run(Q_ORDER_EXTRA, EXTRA_COLS, since("orders")))
         except Exception as e:  # noqa: BLE001 - без записей/отказов ЗН всё равно нужны
@@ -531,7 +547,7 @@ def merge_light(old: dict, old_meta: dict, new: dict, new_meta: dict) -> tuple[d
     meta["to"] = new_meta["to"]
     if new_meta.get("balances_at"):
         meta["balances_at"] = new_meta["balances_at"]
-    refreshed = set(titles.values()) | {"Записи и отказы", "Остатки касс и счетов", "Вид заказ-наряда"}
+    refreshed = set(titles.values()) | {"Записи и отказы", "Остатки касс и счетов", "Вид, плательщик, договор ЗН"}
     # ошибки утренних разделов, которые днём не перечитываются, остаются; остальные - по свежему разу
     meta["errors"] = {**{k: v for k, v in old_meta.get("errors", {}).items() if k not in refreshed},
                       **new_meta.get("errors", {})}

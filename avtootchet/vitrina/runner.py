@@ -26,7 +26,7 @@ DEFAULTS = {
     "site": {"host": "0.0.0.0", "port": 8765, "lines": "", "full_phones": False,
              "users": [], "owner_lock": {}, "marketer_lock": {},
              # слова в типе/статусе/виде ЗН для отдельных строк в «Финансах» (через запятую)
-             "special": {"warranty": "гарант", "personal": "личн"}},
+             "special": {"warranty": "гарант", "personal": "личн", "payer": ""}},
 }
 LEGACY_LOGINS = {"owner": "владелец", "marketer": "маркетолог"}
 
@@ -108,7 +108,10 @@ def make_app(s, path: Path | None = None, demo: bool = False):
         users = site_users({"users": [{"login": l, "role": r, "lock": make_lock(p)} for l, r, p in DEMO_USERS]})
     else:
         users = site_users(site)
-    return App(store, users, web_dir(), special=special_rules(site))
+    special = special_rules(site)
+    if demo:   # в демо «наши машины» - плательщик «Владелец»
+        special["payer"] = ["владелец"]
+    return App(store, users, web_dir(), special=special)
 
 
 def special_rules(site: dict) -> dict:

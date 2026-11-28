@@ -122,7 +122,7 @@ def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tu
                     continue
             orders.append({"plan": plan, "refusal": "", "manager": rnd.choice(USERS + [""]), "deleted": "","number": num, "date": _iso(t), "created": _iso(t), "author": rnd.choice(USERS + ["Мастер Орлов"]),
                            "type": rnd.choice(["СЕРВИС", "СЕРВИС", "МЕТАЛЛООБРАБОТКА"]), "status": status,
-                           "kind": _demo_kind(num),
+                           **_demo_head(num, cl["name"]),
                            "source": rnd.choice(SOURCES) if rnd.random() < 0.12 else "",
                            "client_code": cl["code"], "client": cl["name"], "car": rnd.choice(["Lada Vesta", "Kia Rio", "Hyundai Solaris", "Renault Logan", "Toyota Camry"]),
                            "master": rnd.choice(MASTERS),
@@ -197,10 +197,18 @@ def make_demo(now: datetime | None = None, months: int = 6, seed: int = 7) -> tu
     return tables, meta
 
 
-def _demo_kind(num: str) -> str:
-    """Вид ЗН в демо: без случайных чисел, чтобы не менять остальные выдуманные данные."""
+DEMO_OWNER = "Владелец (наши машины)"
+
+
+def _demo_head(num: str, client: str) -> dict:
+    """Вид, плательщик, договор ЗН в демо: без случайных чисел, чтобы не менять остальные выдуманные данные.
+    Наши машины и гарантия - плательщик владелец; гарантия отличается договором."""
     h = zlib.crc32(num.encode()) % 100
-    return "Гарантия" if h < 5 else "Личный автомобиль" if h < 8 else ""
+    if h < 4:
+        return {"kind": "", "payer": DEMO_OWNER, "contract": "Гарантийный"}
+    if h < 9:
+        return {"kind": "", "payer": DEMO_OWNER, "contract": "Основной договор"}
+    return {"kind": "", "payer": client, "contract": "Основной договор"}
 
 
 def write_demo(path: Path, now: datetime | None = None) -> dict:

@@ -531,13 +531,20 @@ def managers(d: Data, f: Filters, role: str) -> dict:
     return {"managers": out, "masters": mrows, "phone_users": users_with_calls}
 
 
-SPECIAL = (("warranty", "Гарантийные ремонты"), ("personal", "Ремонт личных автомобилей"))
+SPECIAL = (("warranty", "Гарантийные ремонты"), ("personal", "Наши машины (ТО и ремонт)"))
 
 
 def special_of(o: dict, rules: dict) -> str:
-    """Ключ отдельной строки «Финансов» по словам в типе, виде и статусе ЗН ("" - обычный ЗН)."""
-    text = " ".join(str(o.get(k) or "") for k in ("type", "kind", "status")).lower()
-    return next((key for key, _ in SPECIAL if any(w in text for w in rules.get(key) or [])), "")
+    """Ключ отдельной строки «Финансов» ("" - обычный ЗН).
+    Гарантия - слово из настроек в договоре, виде, типе или статусе ЗН. Наши машины - плательщик из
+    настроек (владелец) без гарантийного договора, либо слово «наших машин» в тех же полях."""
+    text = " ".join(str(o.get(k) or "") for k in ("contract", "kind", "type", "status")).lower()
+    if any(w in text for w in rules.get("warranty") or []):
+        return "warranty"
+    payer = str(o.get("payer") or "").lower()
+    if any(w in payer for w in rules.get("payer") or []):
+        return "personal"
+    return "personal" if any(w in text for w in rules.get("personal") or []) else ""
 
 
 def special_orders(d: Data, f: Filters, rules: dict) -> dict:
@@ -548,7 +555,9 @@ def special_orders(d: Data, f: Filters, rules: dict) -> dict:
         closed = [o for o in d.orders if o.get("_closed") and f.has(o["_closed"]) and special_of(o, rules) == key]
         open_now = [o for o in d.orders if not o.get("_closed") and special_of(o, rules) == key
                     and not is_cancelled(o)]
-        rows.append({"key": key, "name": title, "words": ", ".join(rules.get(key) or []) or "не заданы",
+        words = ", ".join(rules.get(key) or []) or "не заданы"
+        rows.append({"key": key, "name": title, "words": words,
+                     "payer": ", ".join(rules.get("payer") or []) if key == "personal" else "",
                      "orders": len(closed), "open": len(open_now),
                      "works": round(sum(float(o.get("works") or 0) for o in closed), 2),
                      "parts": round(sum(float(o.get("parts") or 0) for o in closed), 2),
@@ -557,8 +566,11 @@ def special_orders(d: Data, f: Filters, rules: dict) -> dict:
                      "paid": round(sum(d.paid_by_order.get(o["number"], 0.0) for o in closed), 2)})
     kinds: dict[tuple, dict] = {}
     for o in d.orders_in(Filters(f.d1, f.d2)):
-        k = (o.get("type") or "", o.get("kind") or "", o.get("status") or "")
-        r = kinds.setdefault(k, {"type": k[0] or "—", "kind": k[1] or "—", "status": k[2] or "—",
+        payer = o.get("payer") or ""
+        if not special_of(o, rules) and payer and payer == o.get("client"):
+            payer = "(клиент из ЗН)"   # обычный ЗН: плательщик - сам клиент, имена не плодим
+        k = (o.get("type") or "", o.get("kind") or "", payer, o.get("contract") or "")
+        r = kinds.setdefault(k, {"type": k[0] or "—", "kind": k[1] or "—", "payer": k[2] or "—", "contract": k[3] or "—",
                                  "orders": 0, "amount": 0.0, "special": dict(SPECIAL).get(special_of(o, rules), "")})
         r["orders"] += 1
         r["amount"] += float(o.get("amount") or 0)

@@ -105,7 +105,9 @@ class FDocs:
         if name != "ЗаказНаряд":
             return None
         return type("Doc", (), {"Attributes": Coll([FAttr("Менеджер", "Менеджер", FType("Справочник ссылка.Пользователи")),
-                                                     FAttr("ВидЗН", "Вид", FType("Справочник ссылка.ВидыЗН"))])})()
+                                                     FAttr("ВидЗН", "Вид", FType("Справочник ссылка.ВидыЗН")),
+                                                     FAttr("Плательщик", "Плательщик", FType("Справочник ссылка.Контрагенты")),
+                                                     FAttr("ДоговорКонтрагента", "Договор", FType("Справочник ссылка.Договоры"))])})()
 
 
 class FMeta:
@@ -180,7 +182,7 @@ CLIENTS = [{"Код": "0001", "Наименование": "Клиент А", "С
 PHONES = [{"Код": "0001", "Телефон": "+7 (910) 111-22-33"}, {"Код": "0005", "Телефон": "8-910-777-00-00"},
           {"Код": "0001", "Телефон": "89101112233"}]
 
-KINDS = [{"Номер": "ЗН1", "Вид": "Гарантия"}]
+KINDS = [{"Номер": "ЗН1", "Вид": "", "Плательщик": "Новожилов А.", "Договор": "Гарантийный"}]
 PAID = [{"Знак": 1, "Номер": "ЗН1", "Сумма": 7000}, {"Знак": 1, "Номер": "ЗН1", "Сумма": 1500},   # касса + р/с
         {"Знак": -1, "Номер": "ЗН1", "Сумма": 500}, {"Знак": 1, "Номер": None, "Сумма": 100}]
 conn = Conn({"ДенежныеСредства.Остатки": [
@@ -218,7 +220,14 @@ cf = {r["name"]: r for r in tables["call_fields"]}
 assert (cf["ПутьКФайлу"]["filled"], cf["ПутьКФайлу"]["total"]) == (3, 4), cf
 assert cf["Комментарий"]["filled"] == 0 and cf["Контрагент"]["kind"] == "ссылка: Контрагенты"
 assert cf["Странное"]["filled"] is None                                # поле не сравнить - без числа, сбор цел
-assert o["ЗН1"]["kind"] == "Гарантия"                                   # «Вид» найден по синониму
+assert (o["ЗН1"]["payer"], o["ЗН1"]["contract"]) == ("Новожилов А.", "Гарантийный"), o["ЗН1"]   # найдены по синониму
+assert C.order_head_attrs(conn) == {"kind": "ВидЗН", "payer": "Плательщик", "contract": "ДоговорКонтрагента"}
+from avtootchet.vitrina import metrics as MX
+R = {"warranty": ["гарант"], "personal": ["личн"], "payer": ["новожилов"]}
+assert MX.special_of({"payer": "Новожилов А.", "contract": "Гарантийный"}, R) == "warranty"
+assert MX.special_of({"payer": "Новожилов А.", "contract": "Основной"}, R) == "personal"     # наша машина
+assert MX.special_of({"payer": "Клиент А", "contract": "Основной"}, R) == ""
+assert MX.special_of({"payer": "Клиент А", "contract": "Основной"}, {**R, "payer": []}) == ""
 assert [(b["account"], b["kind"]) for b in tables["balances"]] == [
     ("Касса сервиса", "Касса"), ("Эквайринг", "Касса (карты)"), ("Р/с Альфа", "Расчётный счёт")], tables["balances"]
 assert meta["balances_at"] == "2026-11-13 13:00", meta
@@ -339,7 +348,7 @@ assert set(USERS) == {"саша", "маркетолог"}, USERS          # ст
 assert RN.has_owner({"users": [{"login": "Саша", "role": "owner", "lock": make_lock("owner-pass")}], "owner_lock": {}})
 assert RN.has_owner({"owner_lock": make_lock("old-owner")})
 assert not RN.has_owner({"users": [{"login": "Маша", "role": "marketer", "lock": make_lock("m-pass")}], "owner_lock": {}})
-assert RN.special_rules({}) == {"warranty": ["гарант"], "personal": ["личн"]}
+assert RN.special_rules({}) == {"warranty": ["гарант"], "personal": ["личн"], "payer": []}
 assert RN.special_rules({"special": {"warranty": "Гарантия; ГАР", "personal": ""}})["warranty"] == ["гарантия", "гар"]
 app = App(Store(tmp / "demo.db"), USERS, ROOT / "avtootchet" / "vitrina" / "web", now=lambda: NOW,
           special=RN.special_rules({}))
@@ -388,7 +397,7 @@ owner, market = login("  саша ", "owner-pass"), login("Маркетолог"
 assert json.loads(req("/api/meta", cookie=owner)[1])["user"] == "Саша"
 fin = json.loads(req("/api/finance?from=2026-10-01&to=2026-11-13", cookie=owner)[1])
 names = [r["name"] for r in fin["special"]["rows"]]
-assert names == ["Гарантийные ремонты", "Ремонт личных автомобилей"], names
+assert names == ["Гарантийные ремонты", "Наши машины (ТО и ремонт)"], names
 assert sum(r["orders"] + r["open"] for r in fin["special"]["rows"]) > 0, fin["special"]["rows"]
 assert any(k["special"] == "Гарантийные ремонты" for k in fin["special"]["kinds"])
 assert fin["balances"]["total"] == round(48_250 + 12_900 + 31_400 + 612_780.55, 2), fin["balances"]
