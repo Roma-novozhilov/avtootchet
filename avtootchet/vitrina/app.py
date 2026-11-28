@@ -230,15 +230,21 @@ class VitrinaWindow(QMainWindow):
         special = {**runner.DEFAULTS["site"]["special"], **(s.get("special") or {})}
         self.warranty = QLineEdit(special.get("warranty") or "")
         self.personal = QLineEdit(special.get("personal") or "")
-        for w in (self.warranty, self.personal):
+        self.payer = QLineEdit(special.get("payer") or "")
+        for w in (self.warranty, self.personal, self.payer):
             w.setPlaceholderText("слова через запятую")
-            w.setToolTip("ЗН попадает в строку «Финансов», если в его типе, виде или статусе есть одно из слов")
+        self.warranty.setToolTip("ЗН - гарантийный, если в его договоре (или виде, типе, статусе) есть одно из слов")
+        self.personal.setToolTip("Запасной признак наших машин: слово в договоре, виде, типе или статусе ЗН")
+        self.payer.setToolTip("Плательщик в ЗН, когда ремонтируем свои машины (часть названия контрагента).\n"
+                              "ЗН с таким плательщиком без гарантийного договора - «Наши машины».\n"
+                              "Как называется плательщик - видно в таблице под строками на сайте («Финансы»).")
         f.addRow("Порт:", self.port)
         f.addRow("Названия линий:", self.lines)
         f.addRow("", self.full)
         f.addRow("Вход на сайт:", pw)
         f.addRow("Гарантия (слова):", self.warranty)
-        f.addRow("Личные авто (слова):", self.personal)
+        f.addRow("Наши машины - плательщик:", self.payer)
+        f.addRow("Наши машины (слова):", self.personal)
         self._password_labels()
         lay.addWidget(g)
 
@@ -299,7 +305,8 @@ class VitrinaWindow(QMainWindow):
         site = self.settings["site"]
         site.update({"port": self.port.value(), "lines": self.lines.toPlainText().strip(),
                      "full_phones": self.full.isChecked(),
-                     "special": {"warranty": self.warranty.text().strip(), "personal": self.personal.text().strip()}})
+                     "special": {"warranty": self.warranty.text().strip(), "personal": self.personal.text().strip(),
+                                 "payer": self.payer.text().strip()}})
         self.settings.save()
         if not quiet:
             QMessageBox.information(self, TITLE, "Настройки сохранены. Сайт, запущенный задачей Windows, "

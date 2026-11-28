@@ -4,7 +4,7 @@
 Таблицы:
   calls     - звонки «Простых звонков» (номер телефона - только последние 10 цифр, для
               перезвонов и повторных обращений; на сайте показывается маской);
-  orders    - заказ-наряды: даты, тип, вид, статус, люди, источник рекламы, суммы работ/запчастей/материалов;
+  orders    - заказ-наряды: даты, тип, вид, плательщик, договор, статус, люди, источник рекламы, суммы работ/запчастей/материалов;
   payments  - оплаты клиентов в кассы по ЗН и расходным накладным (как «Выручка» владельца);
   works     - работы из ЗН по дням: сколько раз и на какую сумму;
   tasks     - задачи и напоминания;
@@ -29,7 +29,7 @@ SCHEMA = {
               "client_code", "client", "line", "phone"],
     "orders": ["number", "date", "created", "author", "type", "status", "source", "client_code", "client", "car",
                "master", "in_work", "done", "issued", "repeat", "posted", "amount", "works", "parts", "materials",
-               "plan", "refusal", "manager", "deleted", "kind"],
+               "plan", "refusal", "manager", "deleted", "kind", "payer", "contract"],
     "payments": ["date", "number", "amount", "cashbox", "method", "direction", "client_code", "client",
                  "basis_kind", "basis_number"],
     "works": ["day", "work", "orders", "amount"],
